@@ -38,7 +38,7 @@ def save_access():
         print(f"⚠️ Ошибка при сохранении access.json: {e}")
 
 
-MANAGER = 604303416  # Только этот пользователь может добавлять других
+MANAGER = 56022406  # Только этот пользователь может добавлять других
 
 COLOR_TRANSLATIONS = {
     "검정색": "Чёрный",
@@ -1005,7 +1005,7 @@ def check_for_new_cars(
 # Добавленный код для команд userlist и remove_user
 @bot.message_handler(commands=["userlist"])
 def handle_userlist_command(message):
-    if message.from_user.id not in [604303416, 728438182]:
+    if message.from_user.id not in [56022406, 728438182, 352295689]:
         bot.reply_to(message, "❌ У вас нет доступа к этой команде.")
         return
 
@@ -1025,7 +1025,7 @@ def handle_userlist_command(message):
 
 @bot.message_handler(commands=["remove_user"])
 def handle_remove_user(message):
-    if message.from_user.id not in [604303416, 728438182]:
+    if message.from_user.id not in [56022406, 728438182, 352295689]:
         bot.reply_to(message, "❌ У вас нет доступа к этой команде.")
         return
 
