@@ -1,22 +1,26 @@
+import random
 import json
 import time
 import telebot
 import os
 import requests
 import urllib.parse
+import sys
+import threading
 from telebot import types
 from telebot.handler_backends import State, StatesGroup
 from telebot.storage import StateMemoryStorage
 from dotenv import load_dotenv
 from datetime import datetime
 from translations import translations
+from bs4 import BeautifulSoup
+
+# Set to store checked car IDs
+checked_ids = set()
 
 # Путь до файла
 REQUESTS_FILE = "requests.json"
 ACCESS_FILE = "access.json"
-
-# Глобальный словарь всех запросов пользователей
-user_requests = {}
 
 
 def load_access():
@@ -28,6 +32,13 @@ def load_access():
             print(f"⚠️ Не удалось загрузить access.json: {e}")
             return set()
     return set()
+
+
+# Initialize ACCESS set
+ACCESS = load_access()
+
+# Глобальный словарь всех запросов пользователей
+user_requests = {}
 
 
 def save_access():
@@ -54,6 +65,22 @@ COLOR_TRANSLATIONS = {
     "하늘색": "Голубой",
     "담녹색": "Тёмно-зелёный",
     "청옥색": "Бирюзовый",
+}
+
+# Добавляем словарь с кодами цветов KBChaChaCha
+KBCHACHACHA_COLORS = {
+    "검정색": {"code": "006001", "ru": "Чёрный"},
+    "흰색": {"code": "006002", "ru": "Белый"},
+    "은색": {"code": "006003", "ru": "Серебристый"},
+    "진주색": {"code": "006004", "ru": "Жемчужный"},
+    "회색": {"code": "006005", "ru": "Серый"},
+    "빨간색": {"code": "006006", "ru": "Красный"},
+    "파란색": {"code": "006007", "ru": "Синий"},
+    "주황색": {"code": "006008", "ru": "Оранжевый"},
+    "갈색": {"code": "006009", "ru": "Коричневый"},
+    "초록색": {"code": "006010", "ru": "Зелёный"},
+    "노란색": {"code": "006011", "ru": "Жёлтый"},
+    "보라색": {"code": "006012", "ru": "Фиолетовый"},
 }
 
 # Загружаем переменные из .env
@@ -127,7 +154,7 @@ class CarForm(StatesGroup):
 
 
 def get_manufacturers():
-    url = "https://api.encar.com/search/car/list/general?count=true&q=(And.Hidden.N._.SellType.%EC%9D%bc%EB%B0%98._.CarType.A.)&inav=%7CMetadata%7CSort"
+    url = "https://api.encar.com/search/car/list/general?count=true&q=(And.Hidden.N._.SellType.%EC%9D%BC%EB%B0%98._.CarType.A.)&inav=%7CMetadata%7CSort"
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
         response = requests.get(url, headers=headers)
@@ -148,11 +175,38 @@ def get_manufacturers():
 
 
 def get_models_by_brand(manufacturer):
-    url = f"https://api.encar.com/search/car/list/general?count=true&q=(And.Hidden.N._.SellType.%EC%9D%bc%EB%B0%98._.(C.CarType.A._.Manufacturer.{manufacturer}.))&inav=%7CMetadata%7CSort"
-    headers = {"User-Agent": "Mozilla/5.0"}
+    url = f"https://api.encar.com/search/car/list/general?count=true&q=(And.Hidden.N._.SellType.%EC%9D%BC%EB%B0%98._.(C.CarType.A._.Manufacturer.{manufacturer}.))&inav=%7CMetadata%7CSort"
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Referer": "https://www.encar.com/",
+        "Origin": "https://www.encar.com",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+    }
     try:
+        print(f"DEBUG: Making request to Encar API")
+        print(f"DEBUG: URL: {url}")
+        print(f"DEBUG: manufacturer={manufacturer}")
+
         response = requests.get(url, headers=headers)
-        data = response.json()
+        print(f"DEBUG: Response status code: {response.status_code}")
+
+        if response.status_code != 200:
+            print(f"ERROR: API request failed with status code {response.status_code}")
+            print(f"ERROR: Response text: {response.text}")
+            return []
+
+        try:
+            data = response.json()
+        except json.JSONDecodeError as e:
+            print(f"ERROR: Failed to parse JSON response: {str(e)}")
+            print(f"ERROR: Raw response text: {response.text}")
+            return []
+
+        print(f"DEBUG: Successfully parsed JSON response")
+
         all_manufacturers = (
             data.get("iNav", {})
             .get("Nodes", [])[2]
@@ -161,23 +215,46 @@ def get_models_by_brand(manufacturer):
             .get("Nodes", [])[0]
             .get("Facets", [])
         )
+
         selected_manufacturer = next(
             (item for item in all_manufacturers if item.get("IsSelected")), None
         )
-        if selected_manufacturer:
-            return (
-                selected_manufacturer.get("Refinements", {})
-                .get("Nodes", [])[0]
-                .get("Facets", [])
+
+        if not selected_manufacturer:
+            print("ERROR: Selected manufacturer not found in response")
+            return []
+
+        models = (
+            selected_manufacturer.get("Refinements", {})
+            .get("Nodes", [])[0]
+            .get("Facets", [])
+        )
+
+        if not models:
+            print("ERROR: No models found for manufacturer")
+            return []
+
+        print(f"DEBUG: Found {len(models)} models")
+        for model in models:
+            print(
+                f"DEBUG: Model: {model.get('DisplayValue')} (code: {model.get('Value')})"
             )
+
+        return models
+
+    except requests.RequestException as e:
+        print(f"ERROR: Network error while fetching models: {str(e)}")
         return []
     except Exception as e:
-        print(f"Ошибка при получении моделей для {manufacturer}:", e)
+        print(f"ERROR: Unexpected error while fetching models: {str(e)}")
+        print(f"ERROR: URL: {url}")
+        if "response" in locals():
+            print(f"ERROR: Response text: {response.text}")
         return []
 
 
 def get_generations_by_model(manufacturer, model_group):
-    url = f"https://api.encar.com/search/car/list/general?count=true&q=(And.Hidden.N._.SellType.%EC%9D%bc%EB%B0%98._.(C.CarType.A._.(C.Manufacturer.{manufacturer}._.ModelGroup.{model_group}.)))&inav=%7CMetadata%7CSort"
+    url = f"https://api.encar.com/search/car/list/general?count=true&q=(And.Hidden.N._.SellType.%EC%9D%BC%EB%B0%98._.(C.CarType.A._.(C.Manufacturer.{manufacturer}._.ModelGroup.{model_group}.)))&inav=%7CMetadata%7CSort"
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
         response = requests.get(url, headers=headers)
@@ -416,315 +493,772 @@ def handle_delete_all_requests(call):
 
 @bot.callback_query_handler(func=lambda call: call.data == "search_car")
 def handle_search_car(call):
-    manufacturers = get_manufacturers()
-    if not manufacturers:
-        bot.answer_callback_query(call.id, "Не удалось загрузить марки.")
-        return
-
     markup = types.InlineKeyboardMarkup(row_width=2)
-    for item in manufacturers:  # Удалено ограничение [:10]
-        kr_name = item.get("DisplayValue", "Без названия")
-        eng_name = item.get("Metadata", {}).get("EngName", [""])[0]
-        callback_data = f"brand_{eng_name}_{kr_name}"
-        display_text = f"{eng_name}"
-        markup.add(
-            types.InlineKeyboardButton(display_text, callback_data=callback_data)
-        )
+    markup.add(
+        types.InlineKeyboardButton("Encar", callback_data="source_encar"),
+        types.InlineKeyboardButton("KBChaChaCha", callback_data="source_kbchachacha"),
+    )
 
     bot.send_message(
-        call.message.chat.id, "Выбери марку автомобиля:", reply_markup=markup
+        call.message.chat.id, "Выберите источник данных:", reply_markup=markup
     )
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("source_"))
+def handle_source_selection(call):
+    source = call.data.split("_")[1]
+
+    if source == "encar":
+        manufacturers = get_manufacturers()
+        if not manufacturers:
+            bot.answer_callback_query(call.id, "Не удалось загрузить марки.")
+            return
+
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        for item in manufacturers:
+            kr_name = item.get("DisplayValue", "Без названия")
+            eng_name = item.get("Metadata", {}).get("EngName", [""])[0]
+            callback_data = f"brand_encar_{eng_name}_{kr_name}"
+            display_text = f"{eng_name}"
+            markup.add(
+                types.InlineKeyboardButton(display_text, callback_data=callback_data)
+            )
+
+        bot.edit_message_text(
+            "Выбери марку автомобиля:",
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            reply_markup=markup,
+        )
+    elif source == "kbchachacha":
+        manufacturers = get_kbchachacha_manufacturers()
+        if not manufacturers:
+            bot.answer_callback_query(call.id, "Не удалось загрузить марки.")
+            return
+
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        for item in manufacturers:
+            kr_name = item.get("makerName", "Без названия")
+            kr_name_translated = translations.get(kr_name, kr_name)
+            maker_code = item.get("makerCode", "")
+            callback_data = f"brand_kbchachacha_{kr_name_translated}_{maker_code}"
+            display_text = f"{kr_name_translated}"
+            markup.add(
+                types.InlineKeyboardButton(display_text, callback_data=callback_data)
+            )
+
+        bot.edit_message_text(
+            "Выбери марку автомобиля:",
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            reply_markup=markup,
+        )
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("brand_"))
 def handle_brand_selection(call):
-    _, eng_name, kr_name = call.data.split("_", 2)
-    models = get_models_by_brand(kr_name)
-    if not models:
-        bot.answer_callback_query(call.id, "Не удалось загрузить модели.")
-        return
+    parts = call.data.split("_", 3)
+    source = parts[1]
+    eng_name = parts[2]
+    kr_name = parts[3]
 
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    for item in models:
-        model_kr = item.get("DisplayValue", "Без названия")
-        model_eng = item.get("Metadata", {}).get("EngName", [""])[0]
-        callback_data = f"model_{model_eng}_{model_kr}"
-        display_text = f"{model_eng}"
-        markup.add(
-            types.InlineKeyboardButton(display_text, callback_data=callback_data)
+    if source == "encar":
+        models = get_models_by_brand(kr_name)
+        if not models:
+            bot.answer_callback_query(call.id, "Не удалось загрузить модели.")
+            return
+
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        for item in models:
+            model_kr = item.get("DisplayValue", "Без названия")
+            model_eng = item.get("Metadata", {}).get("EngName", [""])[0]
+            callback_data = f"model_{source}_{model_eng}_{model_kr}"
+            display_text = f"{model_eng}"
+            markup.add(
+                types.InlineKeyboardButton(display_text, callback_data=callback_data)
+            )
+
+        bot.edit_message_text(
+            f"Марка: {eng_name} ({kr_name})\nТеперь выбери модель:",
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            reply_markup=markup,
+        )
+    elif source == "kbchachacha":
+        # Получаем maker_code из callback_data
+        maker_code = parts[3]  # В случае KBChaChaCha, parts[3] содержит maker_code
+
+        models = get_kbchachacha_models(maker_code)
+        if not models:
+            bot.answer_callback_query(call.id, "Не удалось загрузить модели.")
+            return
+
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        for item in models:
+            model_kr = item.get("className", "Без названия")
+            class_code = item.get("classCode", "")
+            # Убедимся, что class_code не содержит подчеркивания
+            if "_" in class_code:
+                class_code = class_code.split("_")[0]
+            # Формируем callback_data с maker_code и class_code
+            callback_data = f"model_kbchachacha_{maker_code}_{class_code}"
+            display_text = f"{model_kr}"
+            markup.add(
+                types.InlineKeyboardButton(display_text, callback_data=callback_data)
+            )
+
+        bot.edit_message_text(
+            f"Марка: {kr_name}\nТеперь выбери модель:",
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            reply_markup=markup,
         )
 
-    bot.edit_message_text(
-        f"Марка: {eng_name} ({kr_name})\nТеперь выбери модель:",
-        chat_id=call.message.chat.id,
-        message_id=call.message.message_id,
-        reply_markup=markup,
+
+def translate_trim(text):
+    return (
+        text.replace("가솔린+전기", "Гибрид")
+        .replace("가솔린", "Бензин")
+        .replace("디젤", "Дизель")
+        .replace("전기", "Электро")
+        .replace("2WD", "2WD")
+        .replace("4WD", "4WD")
     )
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("model_"))
 def handle_model_selection(call):
-    _, model_eng, model_kr = call.data.split("_", 2)
-    message_text = call.message.text
-    # Получаем марку из предыдущего текста сообщения
-    brand_line = next(
-        (line for line in message_text.split("\n") if "Марка:" in line), ""
-    )
-    brand_part = brand_line.replace("Марка:", "").strip()
-    if " (" in brand_part:
-        brand_eng, brand_kr = brand_part.split(" (")
-        brand_kr = brand_kr.rstrip(")")
-    else:
-        brand_eng = brand_part
-        brand_kr = ""
+    parts = call.data.split("_", 3)  # Split into 4 parts initially
+    source = parts[1]
 
-    generations = get_generations_by_model(brand_kr, model_kr)
-    if not generations:
-        bot.answer_callback_query(call.id, "Не удалось загрузить поколения.")
-        return
+    if source == "encar":
+        model_eng = parts[2]
+        model_kr = parts[3]
 
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    for item in generations:
-        gen_kr = item.get("DisplayValue", "Без названия")
-        gen_eng = item.get("Metadata", {}).get("EngName", [""])[0]
+        # Get manufacturer and model from message text
+        message_text = call.message.text
+        brand_line = next(
+            (line for line in message_text.split("\n") if "Марка:" in line), ""
+        )
+        brand_part = brand_line.replace("Марка:", "").strip()
+        if " (" in brand_part:
+            brand_eng, brand_kr = brand_part.split(" (")
+            brand_kr = brand_kr.rstrip(")")
+        else:
+            brand_eng = brand_part
+            brand_kr = ""
 
-        start_raw = str(item.get("Metadata", {}).get("ModelStartDate", [""])[0])
-        end_raw = str(item.get("Metadata", {}).get("ModelEndDate", [""])[0])
+        # Get generations for selected model
+        generations = get_generations_by_model(brand_kr, model_kr)
+        if not generations:
+            bot.answer_callback_query(call.id, "Не удалось загрузить поколения.")
+            return
 
-        def format_date(date_str):
-            if len(date_str) == 6:
-                return f"{date_str[4:6]}.{date_str[0:4]}"
-            return ""
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        for item in generations:
+            gen_kr = item.get("DisplayValue", "Без названия")
+            gen_eng = item.get("Metadata", {}).get("EngName", [""])[0]
 
-        start_date = format_date(start_raw)
-        end_date = format_date(end_raw) if len(end_raw) > 0 else "н.в."
+            start_raw = str(item.get("Metadata", {}).get("ModelStartDate", [""])[0])
+            end_raw = str(item.get("Metadata", {}).get("ModelEndDate", [""])[0])
 
-        period = f"({start_date} — {end_date})" if start_date else ""
+            def format_date(date_str):
+                if len(date_str) == 6:
+                    return f"{date_str[4:6]}.{date_str[0:4]}"
+                return ""
 
-        callback_data = f"generation_{gen_eng}_{gen_kr}"
-        translated_gen_kr = translate_phrase(gen_kr)
-        translated_gen_eng = translate_phrase(gen_eng)
-        display_text = f"{translated_gen_kr} {translated_gen_eng} {period}".strip()
-        markup.add(
-            types.InlineKeyboardButton(display_text, callback_data=callback_data)
+            start_date = format_date(start_raw)
+            end_date = format_date(end_raw) if len(end_raw) > 0 else "н.в."
+
+            period = f"({start_date} — {end_date})" if start_date else ""
+
+            callback_data = f"generation_{source}_{gen_eng}_{gen_kr}"
+            print(
+                f"🔍 DEBUG Creating generation button with callback_data: {callback_data}"
+            )  # Debug print
+            translated_gen_kr = translate_phrase(gen_kr)
+            translated_gen_eng = translate_phrase(gen_eng)
+            display_text = f"{translated_gen_kr} {translated_gen_eng} {period}".strip()
+            markup.add(
+                types.InlineKeyboardButton(display_text, callback_data=callback_data)
+            )
+
+        # Save initial data in user_search_data
+        user_id = call.from_user.id
+        if user_id not in user_search_data:
+            user_search_data[user_id] = {}
+
+        user_search_data[user_id].update(
+            {
+                "manufacturer": brand_eng,
+                "model_group": model_eng,
+                "model": model_eng,
+                "source": source,
+            }
         )
 
-    bot.edit_message_text(
-        f"Марка: {brand_eng.strip()} ({brand_kr})\nМодель: {model_eng} ({model_kr})\nТеперь выбери поколение:",
-        chat_id=call.message.chat.id,
-        message_id=call.message.message_id,
-        reply_markup=markup,
-    )
+        print(f"✅ DEBUG Сохраненные данные для пользователя {user_id}:")
+        print(user_search_data[user_id])
+
+        bot.edit_message_text(
+            f"Марка: {brand_eng.strip()} ({brand_kr})\nМодель: {model_eng} ({model_kr})\nТеперь выбери поколение:",
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            reply_markup=markup,
+        )
+
+    elif source == "kbchachacha":
+        # For KBChaChaCha, we need maker_code and class_code
+        maker_code = parts[2]
+        class_code = parts[3]
+
+        # Get the generations for this model
+        generations = get_kbchachacha_generations(maker_code, class_code)
+        if not generations:
+            bot.answer_callback_query(call.id, "Не удалось загрузить поколения.")
+            return
+
+        # Create markup for generation selection
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        for item in generations:
+            gen_kr = item.get("carName", "Без названия")
+            car_code = item.get("carCode", "")
+            from_year = item.get("fromYear", "")
+            to_year = item.get("toYear", "")
+
+            # Format the period
+            period = f"({from_year} — {to_year if to_year != '현재' else 'н.в.'})"
+
+            callback_data = (
+                f"generation_kbchachacha_{maker_code}_{class_code}_{car_code}"
+            )
+            print(
+                f"🔍 DEBUG Creating KBChaChaCha generation button with callback_data: {callback_data}"
+            )  # Debug print
+            translated_gen_kr = translate_phrase(gen_kr)
+            display_text = f"{translated_gen_kr} {period}".strip()
+            markup.add(
+                types.InlineKeyboardButton(display_text, callback_data=callback_data)
+            )
+
+        # Get the message text to display the selected options
+        message_text = call.message.text
+        brand_line = next(
+            (line for line in message_text.split("\n") if "Марка:" in line), ""
+        )
+        model_line = next(
+            (line for line in message_text.split("\n") if "Модель:" in line), ""
+        )
+
+        # Extract values
+        brand = brand_line.replace("Марка:", "").strip()
+        model = model_line.replace("Модель:", "").strip()
+
+        # Save initial data in user_search_data
+        user_id = call.from_user.id
+        if user_id not in user_search_data:
+            user_search_data[user_id] = {}
+
+        user_search_data[user_id].update(
+            {
+                "manufacturer": brand,
+                "model_group": model,
+                "model": model,
+                "source": source,
+                "maker_code": maker_code,
+                "class_code": class_code,
+            }
+        )
+
+        print(f"✅ DEBUG Сохраненные данные для пользователя {user_id}:")
+        print(user_search_data[user_id])
+
+        bot.edit_message_text(
+            f"Марка: {brand}\nМодель: {model}\nТеперь выбери поколение:",
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            reply_markup=markup,
+        )
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("generation_"))
 def handle_generation_selection(call):
-    def translate_trim(text):
-        return (
-            text.replace("가솔린+전기", "Гибрид")
-            .replace("가솔린", "Бензин")
-            .replace("디젤", "Дизель")
-            .replace("전기", "Электро")
-            .replace("2WD", "2WD")
-            .replace("4WD", "4WD")
+    print(f"🔍 DEBUG: Received generation callback data: {call.data}")
+    parts = call.data.split("_")  # Split all parts
+    print(f"🔍 DEBUG: Split parts: {parts}")
+    source = parts[1]
+    print(f"🔍 DEBUG: Source: {source}")
+
+    if source == "encar":
+        generation_eng = parts[2]
+        generation_kr = "_".join(
+            parts[3:]
+        )  # Join the remaining parts in case kr name contains underscores
+        print(
+            f"🔍 DEBUG Encar - generation_eng: {generation_eng}, generation_kr: {generation_kr}"
+        )
+        message_text = call.message.text
+        print(f"🔍 DEBUG Message text: {message_text}")
+
+        brand_line = next(
+            (line for line in message_text.split("\n") if "Марка:" in line), ""
+        )
+        model_line = next(
+            (line for line in message_text.split("\n") if "Модель:" in line), ""
         )
 
-    _, generation_eng, generation_kr = call.data.split("_", 2)
-    message_text = call.message.text
+        try:
+            brand_eng, brand_kr = brand_line.replace("Марка:", "").strip().split(" (")
+            brand_kr = brand_kr.rstrip(")")
+            model_eng, model_kr = model_line.replace("Модель:", "").strip().split(" (")
+            model_kr = model_kr.rstrip(")")
+        except ValueError as e:
+            print(f"❌ ERROR parsing brand/model: {e}")
+            print(f"brand_line: {brand_line}")
+            print(f"model_line: {model_line}")
+            bot.answer_callback_query(call.id, "Ошибка при обработке данных.")
+            return
 
-    brand_line = next(
-        (line for line in message_text.split("\n") if "Марка:" in line), ""
-    )
-    model_line = next(
-        (line for line in message_text.split("\n") if "Модель:" in line), ""
-    )
+        print(f"🔍 DEBUG Brand: {brand_eng} ({brand_kr})")
+        print(f"🔍 DEBUG Model: {model_eng} ({model_kr})")
 
-    brand_eng, brand_kr = brand_line.replace("Марка:", "").strip().split(" (")
-    brand_kr = brand_kr.rstrip(")")
-    model_eng, model_kr = model_line.replace("Модель:", "").strip().split(" (")
+        generations = get_generations_by_model(brand_kr, model_kr)
+        if not generations:
+            print("❌ ERROR: No generations found")
+            bot.answer_callback_query(call.id, "Не удалось загрузить поколения.")
+            return
 
-    model_kr = model_kr.rstrip(")")
-
-    generations = get_generations_by_model(brand_kr, model_kr)
-    selected_generation = next(
-        (
-            g
-            for g in generations
-            if g.get("DisplayValue") == generation_kr
-            or g.get("Metadata", {}).get("EngName", [""])[0] == generation_eng
-        ),
-        None,
-    )
-    if not selected_generation:
-        bot.answer_callback_query(call.id, "Не удалось определить поколение.")
-        return
-
-    start_raw = str(
-        selected_generation.get("Metadata", {}).get("ModelStartDate", [""])[0]
-    )
-    end_raw = str(selected_generation.get("Metadata", {}).get("ModelEndDate", [""])[0])
-
-    trims = get_trims_by_generation(brand_kr, model_kr, generation_kr)
-    if not trims:
-        bot.answer_callback_query(call.id, "Не удалось загрузить комплектации.")
-        return
-
-    current_year = datetime.now().year
-    current_month = datetime.now().month
-
-    start_year = (
-        int(start_raw[:4])
-        if start_raw and start_raw.isdigit() and len(start_raw) == 6
-        else current_year
-    )
-    if end_raw and end_raw.isdigit() and len(end_raw) == 6:
-        end_year = int(end_raw[:4])
-    else:
-        end_year = current_year
-
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    for item in trims:
-        trim_kr = item.get("DisplayValue", "Без названия")
-        trim_eng = item.get("Metadata", {}).get("EngName", [""])[0]
-        callback_data = f"trim_{trim_eng}_{trim_kr}"
-        translated_text = translations.get(
-            trim_eng, translations.get(trim_kr, trim_eng or trim_kr)
+        selected_generation = next(
+            (
+                g
+                for g in generations
+                if g.get("DisplayValue") == generation_kr
+                or g.get("Metadata", {}).get("EngName", [""])[0] == generation_eng
+            ),
+            None,
         )
-        display_text = translate_trim(translated_text)
-        markup.add(
-            types.InlineKeyboardButton(display_text, callback_data=callback_data)
+        if not selected_generation:
+            print("❌ ERROR: Selected generation not found")
+            print(
+                f"Looking for DisplayValue={generation_kr} or EngName={generation_eng}"
+            )
+            print("Available generations:")
+            for g in generations:
+                print(f"- DisplayValue: {g.get('DisplayValue')}")
+                print(f"  EngName: {g.get('Metadata', {}).get('EngName', [''])[0]}")
+            bot.answer_callback_query(call.id, "Не удалось определить поколение.")
+            return
+
+        print(f"✅ Found selected generation: {selected_generation}")
+
+        trims = get_trims_by_generation(brand_kr, model_kr, generation_kr)
+        if not trims:
+            print("❌ ERROR: No trims found")
+            bot.answer_callback_query(call.id, "Не удалось загрузить комплектации.")
+            return
+
+        print(f"✅ Found {len(trims)} trims")
+
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        for item in trims:
+            trim_kr = item.get("DisplayValue", "Без названия")
+            trim_eng = item.get("Metadata", {}).get("EngName", [""])[0]
+            callback_data = f"trim_{source}_{trim_eng}_{trim_kr}"
+            translated_text = translations.get(
+                trim_eng, translations.get(trim_kr, trim_eng or trim_kr)
+            )
+            display_text = translate_trim(translated_text)
+            markup.add(
+                types.InlineKeyboardButton(display_text, callback_data=callback_data)
+            )
+
+        # Save generation data
+        user_id = call.from_user.id
+        if user_id not in user_search_data:
+            user_search_data[user_id] = {}
+
+        # Save ALL necessary data
+        user_search_data[user_id].update(
+            {
+                "manufacturer": brand_kr.strip(),  # Save Korean name for manufacturer
+                "manufacturer_eng": brand_eng.strip(),  # Save English name for manufacturer
+                "model_group": model_kr.strip(),  # Save Korean name for model
+                "model_group_eng": model_eng.strip(),  # Save English name for model
+                "model": model_kr.strip(),  # Save Korean name for model
+                "model_eng": model_eng.strip(),  # Save English name for model
+                "generation": generation_eng,
+                "generation_kr": generation_kr,
+                "source": source,
+            }
         )
 
-    bot.edit_message_text(
-        f"Марка: {brand_eng.strip()} ({brand_kr})\nМодель: {model_eng} ({model_kr})\nПоколение: {generation_eng} ({generation_kr})\nТеперь выбери комплектацию:",
-        chat_id=call.message.chat.id,
-        message_id=call.message.message_id,
-        reply_markup=markup,
-    )
+        print(f"✅ Saved user data: {user_search_data[user_id]}")
+
+        bot.edit_message_text(
+            f"Марка: {brand_eng.strip()} ({brand_kr})\nМодель: {model_eng} ({model_kr})\nПоколение: {generation_eng} ({generation_kr})\nТеперь выбери комплектацию:",
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            reply_markup=markup,
+        )
+
+    elif source == "kbchachacha":
+        try:
+            # Extract codes from callback data
+            maker_code = parts[2]
+            class_code = parts[3]
+            car_code = parts[4]
+            print(
+                f"🔍 DEBUG KBChaChaCha - maker_code: {maker_code}, class_code: {class_code}, car_code: {car_code}"
+            )
+        except IndexError as e:
+            print(f"❌ ERROR parsing KBChaChaCha codes: {e}")
+            print(f"Available parts: {parts}")
+            bot.answer_callback_query(call.id, "Ошибка при обработке данных.")
+            return
+
+        # Get models for this generation
+        models = get_kbchachacha_models_by_generation(maker_code, class_code, car_code)
+        if not models:
+            print("❌ ERROR: No models found")
+            bot.answer_callback_query(call.id, "Не удалось загрузить модели.")
+            return
+
+        print(f"✅ Found {len(models)} models")
+
+        # Create markup for model selection
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        for model in models:
+            model_name = model.get("modelName", "Без названия")
+            model_code = model.get("modelCode", "")
+            grades = model.get("grades", [])
+            count = model.get("count", 0)
+            print(f"Adding model: {model_name} (code: {model_code})")
+
+            # For each model, add buttons for each grade if available
+            if grades:
+                for grade in grades:
+                    grade_name = grade.get("gradeName", "")
+                    model_grade_code = grade.get("modelGradeCode", "")
+                    display_name = (
+                        f"{model_name} {grade_name}"
+                        if grade_name != "기본형"
+                        else model_name
+                    )
+                    callback_data = f"trim_kbchachacha_{maker_code}_{class_code}_{car_code}_{model_grade_code}"
+                    if count > 0:  # Only add models that have available cars
+                        markup.add(
+                            types.InlineKeyboardButton(
+                                display_name, callback_data=callback_data
+                            )
+                        )
+            else:
+                # If no grades, add just the model
+                callback_data = f"trim_kbchachacha_{maker_code}_{class_code}_{car_code}_{model_code}|002"
+                if count > 0:  # Only add models that have available cars
+                    markup.add(
+                        types.InlineKeyboardButton(
+                            model_name, callback_data=callback_data
+                        )
+                    )
+
+        # Get the message text to display the selected options
+        message_text = call.message.text
+        brand_line = next(
+            (line for line in message_text.split("\n") if "Марка:" in line), ""
+        )
+        model_line = next(
+            (line for line in message_text.split("\n") if "Модель:" in line), ""
+        )
+
+        # Extract values
+        brand = brand_line.replace("Марка:", "").strip()
+        model = model_line.replace("Модель:", "").strip()
+
+        # Save car_code in user data
+        user_id = call.from_user.id
+        if user_id not in user_search_data:
+            user_search_data[user_id] = {}
+
+        user_search_data[user_id].update({"car_code": car_code})
+
+        print(f"✅ Saved user data: {user_search_data[user_id]}")
+
+        bot.edit_message_text(
+            f"Марка: {brand}\nМодель: {model}\nТеперь выбери модификацию:",
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            reply_markup=markup,
+        )
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("trim_"))
 def handle_trim_selection(call):
-    parts = call.data.split("_", 2)
-    trim_eng = parts[1]
-    trim_kr = parts[2] if len(parts) > 2 else parts[1]
-    if not trim_eng.strip():
-        print("⚠️ trim_eng пустой, возможно, ошибка в callback_data или split")
-    message_text = call.message.text
+    parts = call.data.split("_")
+    source = parts[1]
 
-    brand_line = next(
-        (line for line in message_text.split("\n") if "Марка:" in line), ""
-    )
-    model_line = next(
-        (line for line in message_text.split("\n") if "Модель:" in line), ""
-    )
-    generation_line = next(
-        (line for line in message_text.split("\n") if "Поколение:" in line), ""
-    )
+    if source == "encar":
+        # Handle Encar format: trim_encar_eng_name_kr_name
+        trim_eng = parts[2]
+        trim_kr = (
+            "_".join(parts[3:]) if len(parts) > 3 else parts[2]
+        )  # Handle trims with underscores
 
-    brand_eng, brand_kr = brand_line.replace("Марка:", "").strip().split(" (")
-    brand_kr = brand_kr.rstrip(")")
-    model_part = model_line.replace("Модель:", "").strip()
-    if " (" in model_part:
-        model_eng, model_kr = model_part.split(" (")
-        model_kr = model_kr.rstrip(")")
-    else:
-        model_eng = model_part
-        model_kr = ""
-    generation_part = generation_line.replace("Поколение:", "").strip()
-    if "(" in generation_part and ")" in generation_part:
-        parts = generation_part.rsplit("(", 1)
-        generation_eng = parts[0].strip()
-        generation_kr = parts[1].replace(")", "").strip()
-        generation_kr = translations.get(generation_kr, generation_kr)
-    else:
-        generation_eng = generation_part
-        generation_kr = ""
-
-    generations = get_generations_by_model(brand_kr, model_kr)
-    selected_generation = next(
-        (
-            g
-            for g in generations
-            if g.get("DisplayValue") == generation_kr
-            or generation_kr in g.get("DisplayValue", "")
-            or generation_eng in g.get("Metadata", {}).get("EngName", [""])[0]
-        ),
-        None,
-    )
-    if not selected_generation:
-        bot.answer_callback_query(call.id, "Не удалось определить поколение.")
-        return
-
-    start_raw = str(
-        selected_generation.get("Metadata", {}).get("ModelStartDate", [""])[0]
-    )
-    end_raw = str(
-        selected_generation.get("Metadata", {}).get("ModelEndDate", [""])[0] or ""
-    )
-
-    current_year = datetime.now().year
-    current_month = datetime.now().month
-
-    if end_raw and end_raw.isdigit():
-        end_year = int(end_raw[:4])
-    else:
-        end_year = current_year
-
-    end_date_value = (
-        end_raw if len(end_raw) > 0 else f"{current_year}{current_month:02d}"
-    )
-
-    start_year = int(start_raw[:4]) if len(start_raw) == 6 else current_year
-    end_year = int(end_date_value[:4])
-
-    year_markup = types.InlineKeyboardMarkup(row_width=4)
-    for y in range(start_year, end_year + 1):
-        year_markup.add(types.InlineKeyboardButton(str(y), callback_data=f"year_{y}"))
-
-    user_id = call.from_user.id
-    print(f"✅ DEBUG trim_eng: {trim_eng}")
-    print(f"✅ DEBUG trim_kr: {trim_kr}")
-    if user_id not in user_search_data:
-        user_search_data[user_id] = {}
-    user_search_data[user_id]["manufacturer"] = brand_kr.strip()
-    user_search_data[user_id]["model_group"] = model_kr.strip()
-    user_search_data[user_id]["model"] = generation_kr.strip()
-    user_search_data[user_id]["trim"] = trim_eng.strip() or trim_kr.strip()
-    bot.send_message(
-        call.message.chat.id,
-        f"Марка: {brand_eng.strip()} ({brand_kr})\nМодель: {model_eng} ({model_kr})\nПоколение: {generation_eng} ({generation_kr})\nКомплектация: {trim_eng} ({trim_kr})",
-    )
-    bot.send_message(
-        call.message.chat.id, "Выбери год выпуска автомобиля:", reply_markup=year_markup
-    )
-
-    mileage_markup = types.InlineKeyboardMarkup(row_width=4)
-    for value in range(0, 200001, 10000):
-        mileage_markup.add(
-            types.InlineKeyboardButton(
-                f"{value} км", callback_data=f"mileage_from_{value}"
-            )
+        message_text = call.message.text
+        brand_line = next(
+            (line for line in message_text.split("\n") if "Марка:" in line), ""
+        )
+        model_line = next(
+            (line for line in message_text.split("\n") if "Модель:" in line), ""
+        )
+        generation_line = next(
+            (line for line in message_text.split("\n") if "Поколение:" in line), ""
         )
 
-    # Removed mileage selection from trim handler.
+        # Extract brand information
+        brand_eng, brand_kr = brand_line.replace("Марка:", "").strip().split(" (")
+        brand_kr = brand_kr.rstrip(")")
+
+        # Extract model information
+        model_part = model_line.replace("Модель:", "").strip()
+        model_eng, model_kr = model_part.split(" (")
+        model_kr = model_kr.rstrip(")")
+
+        # Extract generation information
+        generation_part = generation_line.replace("Поколение:", "").strip()
+        generation_eng, generation_kr = generation_part.split(" (")
+        generation_kr = generation_kr.rstrip(")")
+
+        # Get generations data
+        generations = get_generations_by_model(brand_kr, model_kr)
+        selected_generation = next(
+            (
+                g
+                for g in generations
+                if g.get("DisplayValue") == generation_kr
+                or generation_kr in g.get("DisplayValue", "")
+                or generation_eng in g.get("Metadata", {}).get("EngName", [""])[0]
+            ),
+            None,
+        )
+
+        if not selected_generation:
+            bot.answer_callback_query(call.id, "Не удалось определить поколение.")
+            return
+
+        # Get year range from generation metadata
+        start_raw = str(
+            selected_generation.get("Metadata", {}).get("ModelStartDate", [""])[0]
+        )
+        end_raw = str(
+            selected_generation.get("Metadata", {}).get("ModelEndDate", [""])[0] or ""
+        )
+
+        current_year = datetime.now().year
+        current_month = datetime.now().month
+
+        # Calculate start and end years
+        start_year = int(start_raw[:4]) if len(start_raw) == 6 else current_year
+
+        if end_raw and end_raw.isdigit():
+            end_year = int(end_raw[:4])
+        else:
+            end_year = current_year
+
+        # Create year selection markup
+        year_markup = types.InlineKeyboardMarkup(row_width=4)
+        for y in range(start_year, end_year + 1):
+            year_markup.add(
+                types.InlineKeyboardButton(str(y), callback_data=f"year_{source}_{y}")
+            )
+
+        # Save ALL necessary data
+        user_id = call.from_user.id
+        if user_id not in user_search_data:
+            user_search_data[user_id] = {}
+
+        user_search_data[user_id].update(
+            {
+                "manufacturer": brand_kr.strip(),
+                "manufacturer_eng": brand_eng.strip(),
+                "model_group": model_kr.strip(),
+                "model_group_eng": model_eng.strip(),
+                "model": model_kr.strip(),
+                "model_eng": model_eng.strip(),
+                "generation": generation_eng.strip(),
+                "generation_kr": generation_kr.strip(),
+                "trim": trim_kr.strip(),
+                "trim_eng": trim_eng.strip(),
+                "source": source,
+            }
+        )
+
+        print(f"✅ DEBUG Saved user data: {user_search_data[user_id]}")
+
+        # Send messages
+        bot.send_message(
+            call.message.chat.id,
+            f"Марка: {brand_eng.strip()} ({brand_kr})\n"
+            f"Модель: {model_eng} ({model_kr})\n"
+            f"Поколение: {generation_eng} ({generation_kr})\n"
+            f"Комплектация: {trim_eng} ({trim_kr})",
+        )
+        bot.send_message(
+            call.message.chat.id,
+            "Выбери год выпуска автомобиля:",
+            reply_markup=year_markup,
+        )
+
+    elif source == "kbchachacha":
+        # Handle KBChaChaCha format: trim_kbchachacha_maker_code_class_code_car_code_model_code
+        if len(parts) < 6:
+            bot.answer_callback_query(call.id, "Неверный формат данных.")
+            return
+
+        maker_code = parts[2]
+        class_code = parts[3]
+        car_code = parts[4]
+        model_code = parts[5]
+
+        # Get model name from the API first
+        models = get_kbchachacha_models_by_generation(maker_code, class_code, car_code)
+        selected_model = next(
+            (m for m in models if m.get("modelCode") == model_code), None
+        )
+
+        if not selected_model:
+            bot.answer_callback_query(call.id, "Модель не найдена.")
+            return
+
+        model_name = selected_model.get("modelName", "")
+
+        message_text = call.message.text
+        brand_line = next(
+            (line for line in message_text.split("\n") if "Марка:" in line), ""
+        )
+        model_line = next(
+            (line for line in message_text.split("\n") if "Модель:" in line), ""
+        )
+        # Извлекаем название марки и модели
+        brand = brand_line.replace("Марка:", "").strip()
+        model = model_line.replace("Модель:", "").strip()
+
+        # Get the generation to determine the year range
+        generations = get_kbchachacha_generations(maker_code, class_code)
+        selected_generation = None
+        for gen in generations:
+            if gen.get("carCode") == car_code:
+                selected_generation = gen
+                break
+
+        if not selected_generation:
+            bot.answer_callback_query(call.id, "Не удалось определить поколение.")
+            return
+
+        from_year = int(selected_generation.get("fromYear", datetime.now().year))
+        to_year_str = selected_generation.get("toYear", "")
+
+        # If toYear is "현재" (current) or empty, use current year
+        if to_year_str == "현재" or not to_year_str:
+            to_year = datetime.now().year
+        else:
+            to_year = int(to_year_str)
+
+        # Create year selection markup
+        year_markup = types.InlineKeyboardMarkup(row_width=4)
+        for y in range(from_year, to_year + 1):
+            year_markup.add(
+                types.InlineKeyboardButton(
+                    str(y),
+                    callback_data=f"year_kbchachacha_{maker_code}_{class_code}_{car_code}_{model_code}_{y}",
+                )
+            )
+
+        # Save the selected data for later use
+        user_id = call.from_user.id
+        if user_id not in user_search_data:
+            user_search_data[user_id] = {}
+
+        user_search_data[user_id].update(
+            {
+                "manufacturer": brand,
+                "model_group": model_name,
+                "model": model_name,
+                "source": source,
+                "maker_code": maker_code,
+                "class_code": class_code,
+                "car_code": car_code,
+                "model_code": model_code,
+                "model_grade_code": f"{model_code}|002",
+                "year": from_year,  # Устанавливаем начальный год как значение по умолчанию
+            }
+        )
+
+        print(f"✅ DEBUG Сохраненные данные для пользователя {user_id}:")
+        print(user_search_data[user_id])
+
+        bot.edit_message_text(
+            f"Марка: {brand}\nМодель: {model_name}\nТеперь выбери год выпуска автомобиля:",
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            reply_markup=year_markup,
+        )
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("year_"))
 def handle_year_selection(call):
-    selected_year = int(call.data.split("_")[1])
-    user_id = call.from_user.id
-    if user_id not in user_search_data:
-        user_search_data[user_id] = {}
-    user_search_data[user_id]["year"] = selected_year  # 👈 сохраняем год
+    parts = call.data.split("_")
+    source = parts[1]
 
+    if source == "kbchachacha":
+        # Handle KBChaChaCha format: year_kbchachacha_maker_code_class_code_car_code_model_code_year
+        if len(parts) < 7:
+            bot.answer_callback_query(call.id, "Неверный формат данных.")
+            return
+        maker_code = parts[2]
+        class_code = parts[3]
+        car_code = parts[4]
+        model_code = parts[5]
+        selected_year = int(parts[6])
+
+        user_id = call.from_user.id
+        if user_id not in user_search_data:
+            user_search_data[user_id] = {}
+
+        # Update with KBChaChaCha specific data
+        user_search_data[user_id].update(
+            {
+                "year": selected_year,
+                "source": source,
+                "maker_code": maker_code,
+                "class_code": class_code,
+                "car_code": car_code,
+                "model_code": model_code,
+                "model_grade_code": f"{model_code}|002",
+            }
+        )
+    else:
+        # Handle Encar format: year_encar_year
+        selected_year = int(parts[2])
+
+        user_id = call.from_user.id
+        if user_id not in user_search_data:
+            user_search_data[user_id] = {}
+        user_search_data[user_id]["year"] = selected_year
+        user_search_data[user_id]["source"] = source
+
+    print(f"✅ DEBUG user_data after year selection: {user_search_data[user_id]}")
+
+    # Create mileage selection markup
     mileage_markup = types.InlineKeyboardMarkup(row_width=4)
     for value in range(0, 200001, 10000):
         mileage_markup.add(
             types.InlineKeyboardButton(
-                f"{value} км", callback_data=f"mileage_from_{value}"
+                f"{value} км",
+                callback_data=f"mileage_from_{source}_{selected_year}_{value}",
             )
         )
+
+    # Get the message text to display the selected options
     message_text = call.message.text
     bot.send_message(
         call.message.chat.id,
@@ -735,142 +1269,100 @@ def handle_year_selection(call):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("mileage_from_"))
 def handle_mileage_from(call):
-    mileage_from = int(call.data.split("_")[2])
+    parts = call.data.split("_")
+    source = parts[2]
+    year = int(parts[3])  # Get the selected year
+    mileage_from = int(parts[4])  # Get the selected mileage
+
+    user_id = call.from_user.id
+    if user_id not in user_search_data:
+        user_search_data[user_id] = {}
+
+    # Save mileage_from and year
+    user_search_data[user_id]["mileage_from"] = mileage_from
+    user_search_data[user_id]["year"] = year
+
+    # Create mileage selection markup for maximum mileage
     mileage_markup = types.InlineKeyboardMarkup(row_width=4)
-    for value in range(mileage_from + 10000, 200001, 10000):
+    for value in range(10000, 200001, 10000):
         mileage_markup.add(
             types.InlineKeyboardButton(
-                f"{value} км", callback_data=f"mileage_to_{mileage_from}_{value}"
+                f"{value} км",
+                callback_data=f"mileage_to_{source}_{year}_{mileage_from}_{value}",
             )
         )
 
-    bot.send_message(
-        call.message.chat.id,
-        f"Минимальный пробег: {mileage_from} км\nТеперь выбери максимальный пробег:",
+    # Get the message text to display the selected options
+    message_text = call.message.text
+    brand_line = next(
+        (line for line in message_text.split("\n") if "Марка:" in line), ""
+    )
+    model_line = next(
+        (line for line in message_text.split("\n") if "Модель:" in line), ""
+    )
+
+    # Extract values
+    brand = brand_line.replace("Марка:", "").strip()
+    model = model_line.replace("Модель:", "").strip()
+
+    bot.edit_message_text(
+        f"Марка: {brand}\nМодель: {model}\nГод выпуска: {year}\nМинимальный пробег: {mileage_from} км\nТеперь выбери максимальный пробег:",
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
         reply_markup=mileage_markup,
     )
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("mileage_to_"))
 def handle_mileage_to(call):
-    mileage_from = int(call.data.split("_")[2])
-    mileage_to = int(call.data.split("_")[3])
-
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    for kr, ru in COLOR_TRANSLATIONS.items():
-        markup.add(types.InlineKeyboardButton(ru, callback_data=f"color_{kr}"))
-
-    bot.send_message(
-        call.message.chat.id,
-        f"Пробег: от {mileage_from} км до {mileage_to} км\nТеперь выбери цвет автомобиля:",
-        reply_markup=markup,
-    )
-
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("color_"))
-def handle_color_selection(call):
-    selected_color_kr = call.data.split("_", 1)[1]
-    message_text = call.message.text
-    selected_color_ru = (
-        "Любой"
-        if selected_color_kr == "all"
-        else COLOR_TRANSLATIONS.get(selected_color_kr, "Неизвестно")
-    )
+    parts = call.data.split("_")
+    source = parts[2]
+    year = int(parts[3])
+    mileage_from = int(parts[4])
+    mileage_to = int(parts[5])
 
     user_id = call.from_user.id
     user_data = user_search_data.get(user_id, {})
-    print(f"✅ DEBUG user_data before color selection: {user_data}")
 
-    manufacturer = user_data.get("manufacturer", "")
-    model_group = user_data.get("model_group", "")
-    model = user_data.get("model", "")
-    trim = user_data.get("trim", "")
+    # Update the user data with mileage values
+    updated_data = {
+        **user_data,  # Keep all existing data
+        "year": year,
+        "mileage_from": mileage_from,
+        "mileage_to": mileage_to,
+    }
 
-    mileage_line = next(
-        (line for line in message_text.split("\n") if "Пробег:" in line), ""
-    )
-    mileage_from = int(mileage_line.split("от")[1].split("км")[0].strip())
-    mileage_to = int(mileage_line.split("до")[1].split("км")[0].strip())
+    # Create color selection markup
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    if source == "kbchachacha":
+        for kr, color_data in KBCHACHACHA_COLORS.items():
+            markup.add(
+                types.InlineKeyboardButton(
+                    color_data["ru"], callback_data=f"color_{source}_{kr}"
+                )
+            )
+    else:
+        for kr, ru in COLOR_TRANSLATIONS.items():
+            markup.add(
+                types.InlineKeyboardButton(ru, callback_data=f"color_{source}_{kr}")
+            )
 
-    year = user_data.get("year", datetime.now().year)
+    user_search_data[user_id] = updated_data
 
-    print("⚙️ Данные переданы в check_for_new_cars:")
-    print(f"manufacturer: {manufacturer.strip()}")
-    print(f"model_group: {model_group.strip()}")
-    print(f"model: {model.strip()}")
-    print(f"trim: {trim.strip()}")
+    print(f"✅ DEBUG user_data after mileage selection: {user_search_data[user_id]}")
 
-    bot.send_message(
-        call.message.chat.id,
-        "🔍 Начинаем поиск автомобилей по заданным параметрам. Это может занять некоторое время...",
-    )
-    # Кнопки после завершения добавления авто
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    markup.add(
-        types.InlineKeyboardButton(
-            "➕ Добавить новый автомобиль в поиск", callback_data="search_car"
-        )
-    )
-    markup.add(
-        types.InlineKeyboardButton("🏠 Вернуться в главное меню", callback_data="start")
-    )
-    bot.send_message(
-        call.message.chat.id,
-        "Хотите добавить ещё один автомобиль в поиск или вернуться в главное меню?",
+    bot.edit_message_text(
+        f"Марка: {user_data.get('manufacturer_eng', '')} ({user_data.get('manufacturer', '')})\n"
+        f"Модель: {user_data.get('model_eng', '')} ({user_data.get('model', '')})\n"
+        f"Поколение: {user_data.get('generation', '')} ({user_data.get('generation_kr', '')})\n"
+        f"Комплектация: {user_data.get('trim_eng', '')} ({user_data.get('trim', '')})\n"
+        f"Год выпуска: {year}\n"
+        f"Пробег: от {mileage_from} до {mileage_to} км\n"
+        f"Теперь выбери цвет автомобиля:",
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
         reply_markup=markup,
     )
-
-    if user_id not in user_requests:
-        user_requests[user_id] = []
-
-    user_requests[user_id].append(
-        {
-            "manufacturer": manufacturer,
-            "model_group": model_group,
-            "model": model,
-            "trim": trim,
-            "year": year,
-            "mileage_from": mileage_from,
-            "mileage_to": mileage_to,
-            "color": selected_color_kr,
-        }
-    )
-
-    save_requests(user_requests)
-
-    import threading
-
-    threading.Thread(
-        target=check_for_new_cars,
-        args=(
-            call.message.chat.id,
-            manufacturer.strip(),  # manufacturer
-            model_group.strip(),  # model_group
-            model.strip(),  # model
-            trim.strip(),  # trim
-            year,
-            mileage_from,
-            mileage_to,
-            selected_color_kr.strip(),
-        ),
-        daemon=True,
-    ).start()
-
-
-@bot.message_handler(state=CarForm.brand)
-def handle_brand(message):
-    bot.send_message(message.chat.id, "Отлично! Теперь введи модель:")
-    bot.set_state(message.from_user.id, CarForm.model, message.chat.id)
-
-
-# Обработчик модели
-@bot.message_handler(state=CarForm.model)
-def handle_model(message):
-    bot.send_message(message.chat.id, "Укажи поколение:")
-    bot.set_state(message.from_user.id, CarForm.generation, message.chat.id)
-
-
-checked_ids = set()
 
 
 def build_encar_url(
@@ -905,6 +1397,105 @@ def build_encar_url(
 
     print(f"📡 Сформирован URL: {url}")
     return url
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("color_"))
+def handle_color_selection(call):
+    parts = call.data.split("_", 2)
+    source = parts[1]
+    selected_color_kr = parts[2]
+
+    user_id = call.from_user.id
+    user_data = user_search_data.get(user_id, {})
+
+    # Update the user data with color selection
+    if source == "encar":
+        user_data["color"] = selected_color_kr
+        color_display = COLOR_TRANSLATIONS.get(selected_color_kr, selected_color_kr)
+
+        # Get all necessary parameters for URL building
+        manufacturer = user_data.get("manufacturer", "").strip()
+        model_group = user_data.get("model_group", "").strip()
+        generation = user_data.get("generation_kr", "").strip()
+        if "(" in generation and ")" in generation:
+            generation = generation.replace(")", "_)")
+        trim = user_data.get("trim", "").strip()
+        year = user_data.get("year", "")
+        mileage_from = user_data.get("mileage_from", 0)
+        mileage_to = user_data.get("mileage_to", 200000)
+
+        # Start car checking in a background thread
+        thread = threading.Thread(
+            target=check_for_new_cars,
+            args=(
+                call.message.chat.id,
+                manufacturer,
+                model_group,
+                generation,
+                trim,
+                year,
+                mileage_from,
+                mileage_to,
+                selected_color_kr,
+            ),
+            daemon=True,
+        )
+        thread.start()
+        print(f"✅ Started car checking thread for user {user_id}")
+
+    else:  # kbchachacha
+        user_data["color_code"] = KBCHACHACHA_COLORS.get(selected_color_kr, {}).get(
+            "code", "all"
+        )
+        color_display = KBCHACHACHA_COLORS.get(selected_color_kr, {}).get(
+            "ru", selected_color_kr
+        )
+
+    user_search_data[user_id] = user_data
+
+    # Save the request to user_requests
+    if str(user_id) not in user_requests:
+        user_requests[str(user_id)] = []
+
+    # Create a new request object
+    new_request = {
+        "manufacturer": f"{user_data.get('manufacturer_eng', '')} ({user_data.get('manufacturer', '')})",
+        "model_group": f"{user_data.get('model_group_eng', '')} ({user_data.get('model_group', '')})",
+        "model": f"{user_data.get('model_eng', '')} ({user_data.get('model', '')})",
+        "generation": f"{user_data.get('generation', '')} ({user_data.get('generation_kr', '')})",
+        "trim": f"{user_data.get('trim_eng', '')} ({user_data.get('trim', '')})",
+        "year": user_data.get("year"),
+        "mileage_from": user_data.get("mileage_from"),
+        "mileage_to": user_data.get("mileage_to"),
+        "color": color_display,
+        "source": source,
+    }
+
+    # Add the request to the list
+    user_requests[str(user_id)].append(new_request)
+    save_requests(user_requests)
+
+    # Create markup for returning to main menu
+    markup = types.InlineKeyboardMarkup()
+    markup.add(
+        types.InlineKeyboardButton("🏠 Вернуться в главное меню", callback_data="start")
+    )
+
+    # Send confirmation message
+    bot.edit_message_text(
+        f"✅ Запрос сохранён!\n\n"
+        f"Марка: {user_data.get('manufacturer_eng', '')} ({user_data.get('manufacturer', '')})\n"
+        f"Модель: {user_data.get('model_eng', '')} ({user_data.get('model', '')})\n"
+        f"Поколение: {user_data.get('generation', '')} ({user_data.get('generation_kr', '')})\n"
+        f"Комплектация: {user_data.get('trim_eng', '')} ({user_data.get('trim', '')})\n"
+        f"Год выпуска: {user_data.get('year')}\n"
+        f"Пробег: от {user_data.get('mileage_from')} до {user_data.get('mileage_to')} км\n"
+        f"Цвет: {color_display}\n\n"
+        f"Мы уведомим вас, когда найдём подходящие автомобили.",
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
+        reply_markup=markup,
+    )
 
 
 def check_for_new_cars(
@@ -972,7 +1563,7 @@ def check_for_new_cars(
                 year = car.get("FormYear", "")
 
                 def format_number(n):
-                    return f"{int(n):,}".replace(",", " ")
+                    return f"{int(n):,}".replace(",", " ")
 
                 formatted_mileage = format_number(mileage)
                 formatted_price = format_number(price * 10000)
@@ -1002,64 +1593,154 @@ def check_for_new_cars(
             time.sleep(300)
 
 
-# Добавленный код для команд userlist и remove_user
-@bot.message_handler(commands=["userlist"])
-def handle_userlist_command(message):
-    if message.from_user.id not in [56022406, 728438182, 352295689]:
-        bot.reply_to(message, "❌ У вас нет доступа к этой команде.")
-        return
-
-    if not ACCESS:
-        bot.reply_to(message, "❌ В списке доступа пока нет пользователей.")
-        return
-
-    access_list = list(ACCESS)
-    text = "📋 Список пользователей с доступом к боту:\n\n"
-    for user_id in access_list:
-        text += f"• <code>{user_id}</code>\n"
-
-    text += "\nЧтобы удалить пользователя, отправьте команду:\n/remove_user [ID]"
-
-    bot.send_message(message.chat.id, text, parse_mode="HTML")
-
-
-@bot.message_handler(commands=["remove_user"])
-def handle_remove_user(message):
-    if message.from_user.id not in [56022406, 728438182, 352295689]:
-        bot.reply_to(message, "❌ У вас нет доступа к этой команде.")
-        return
-
-    try:
-        parts = message.text.split()
-        if len(parts) != 2:
-            bot.reply_to(message, "⚠️ Используйте формат: /remove_user [ID]")
-            return
-
-        user_id_to_remove = int(parts[1])
-        if user_id_to_remove in ACCESS:
-            ACCESS.remove(user_id_to_remove)
-            save_access()
-            bot.reply_to(
-                message, f"✅ Пользователь {user_id_to_remove} удалён из доступа."
-            )
-        else:
-            bot.reply_to(message, "⚠️ Этот пользователь не найден в списке доступа.")
-    except Exception as e:
-        bot.reply_to(message, f"⚠️ Ошибка: {e}")
-
-
-# Запуск бота
-if __name__ == "__main__":
-    from datetime import datetime
-
-    print("=" * 50)
-    print(
-        f"🚀 [82 Auto Bot] Запуск бота — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+def get_kbchachacha_manufacturers():
+    url = (
+        "https://www.kbchachacha.com/public/search/carMaker.json?page=1&sort=-orderDate"
     )
-    print("📦 Загрузка сохранённых запросов пользователей...")
-    load_requests()
-    print("✅ Запросы успешно загружены.")
-    print("🤖 Бот запущен и ожидает команды...")
-    print("=" * 50)
-    ACCESS = load_access()
-    bot.infinity_polling()
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            data = response.json()
+            # Combine both domestic and imported manufacturers
+            manufacturers = []
+            if "국산" in data["result"]:  # Domestic manufacturers
+                manufacturers.extend(data["result"]["국산"])
+            if "수입" in data["result"]:  # Imported manufacturers
+                manufacturers.extend(data["result"]["수입"])
+
+            # Sort by count (number of available cars) in descending order
+            manufacturers.sort(key=lambda x: x.get("count", 0), reverse=True)
+            return manufacturers
+        else:
+            print(f"❌ Ошибка при получении производителей: {response.status_code}")
+            return []
+    except Exception as e:
+        print(f"❌ Ошибка при запросе производителей: {e}")
+        return []
+
+
+def get_kbchachacha_models(maker_code):
+    url = f"https://www.kbchachacha.com/public/search/carClass.json?makerCode={maker_code}&page=1&sort=-orderDate"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            data = response.json()
+            models = data.get("result", {}).get("code", [])
+
+            # Sort models by number of cars available (using the sale data)
+            sale_data = data.get("result", {}).get("sale", {})
+            for model in models:
+                class_code = model.get("classCode")
+                model["count"] = sale_data.get(class_code, 0)
+
+            models.sort(key=lambda x: x.get("count", 0), reverse=True)
+            return models
+        else:
+            print(f"❌ Ошибка при получении моделей: {response.status_code}")
+            return []
+    except Exception as e:
+        print(f"❌ Ошибка при запросе моделей: {e}")
+        return []
+
+
+def get_kbchachacha_generations(maker_code, class_code):
+    url = f"https://www.kbchachacha.com/public/search/carName.json?makerCode={maker_code}&page=1&sort=-orderDate&classCode={class_code}"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            data = response.json()
+            generations = data.get("result", {}).get("code", [])
+
+            # Sort generations by number of cars available (using the sale data)
+            sale_data = data.get("result", {}).get("sale", {})
+            for gen in generations:
+                car_code = gen.get("carCode")
+                gen["count"] = sale_data.get(car_code, 0)
+
+                # Convert Korean year format to numeric
+                if gen.get("toYear") == "현재":
+                    gen["toYear"] = str(datetime.now().year)
+
+            generations.sort(key=lambda x: x.get("count", 0), reverse=True)
+            return generations
+        else:
+            print(f"❌ Ошибка при получении поколений: {response.status_code}")
+            return []
+    except Exception as e:
+        print(f"❌ Ошибка при запросе поколений: {e}")
+        return []
+
+
+def get_kbchachacha_models_by_generation(maker_code, class_code, car_code):
+    url = f"https://www.kbchachacha.com/public/search/carModel.json?makerCode={maker_code}&page=1&sort=-orderDate&classCode={class_code}&carCode={car_code}"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            data = response.json()
+            models = data.get("result", {}).get("codeModel", [])
+
+            # Get sale data for sorting by availability
+            sale_data = data.get("result", {}).get("sale", {})
+            for model in models:
+                model_code = model.get("modelCode")
+                model_sales = sale_data.get(model_code, {})
+                model["count"] = (
+                    model_sales.get("modelCount", 0)
+                    if isinstance(model_sales, dict)
+                    else 0
+                )
+
+                # Add grade information
+                grades = [
+                    grade
+                    for grade in data.get("result", {}).get("codeGrade", [])
+                    if grade.get("modelCode") == model_code
+                ]
+                model["grades"] = grades
+
+            # Sort models by number of available cars
+            models.sort(key=lambda x: x.get("count", 0), reverse=True)
+            return models
+        else:
+            print(
+                f"❌ Ошибка при получении моделей по поколению: {response.status_code}"
+            )
+            return []
+    except Exception as e:
+        print(f"❌ Ошибка при запросе моделей по поколению: {e}")
+        return []
+
+
+def build_kbchachacha_url(
+    maker_code, class_code, car_code, model_code, year, color_code
+):
+    url = (
+        f"https://api.kbchachacha.com/api/cars?"
+        f"makerCode={maker_code}&"
+        f"classCode={class_code}&"
+        f"carCode={car_code}&"
+        f"modelCode={model_code}&"
+        f"modelGradeCode={model_code}|002&"  # Default grade code
+        f"fromYear={year}&"
+        f"toYear={year}&"
+        f"colorCode={color_code}"
+    )
+    return url
+
+
+if __name__ == "__main__":
+    print("Starting Telegram bot...")
+    print("Bot username: @{}".format(bot.get_me().username))
+    print("Press Ctrl+C to stop the bot")
+    try:
+        bot.infinity_polling(none_stop=True)
+    except KeyboardInterrupt:
+        print("\nBot stopped by user")
+        sys.exit(0)
+    except Exception as e:
+        print(f"\nError occurred: {e}")
+        sys.exit(1)
