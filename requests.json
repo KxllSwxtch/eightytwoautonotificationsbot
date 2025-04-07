@@ -1,16 +1,16 @@
 {
   "728438182": [
     {
-      "manufacturer": " (107)",
-      "model_group": " (530i 투어링)",
-      "model": " (530i 투어링)",
-      "generation": " ()",
+      "manufacturer": " (BMW)",
+      "model_group": " (X5M)",
+      "model": " ()",
+      "generation": "X5M (F95) (X5M (F95))",
       "trim": " ()",
-      "year": 2016,
+      "year": 2024,
       "mileage_from": 0,
       "mileage_to": 200000,
       "color": "Белый",
-      "source": "kbchachacha"
+      "source": "kcar"
     }
   ]
 }

@@ -498,6 +498,9 @@ def handle_search_car(call):
         types.InlineKeyboardButton("Encar", callback_data="source_encar"),
         types.InlineKeyboardButton("KBChaChaCha", callback_data="source_kbchachacha"),
     )
+    markup.add(
+        types.InlineKeyboardButton("KCar", callback_data="source_kcar"),
+    )
 
     bot.send_message(
         call.message.chat.id, "Выберите источник данных:", reply_markup=markup
@@ -553,16 +556,44 @@ def handle_source_selection(call):
             message_id=call.message.message_id,
             reply_markup=markup,
         )
+    elif source == "kcar":
+        manufacturers = get_kcar_manufacturers()
+        if not manufacturers:
+            bot.answer_callback_query(call.id, "Не удалось загрузить марки KCar.")
+            return
+
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        for item in manufacturers:
+            mnuftr_enm = item.get("mnuftrEnm", "Без названия")
+            path = item.get("path", "")
+
+            # Используем только код производителя (path) в callback_data,
+            # чтобы избежать проблем с длиной и кодировкой
+            callback_data = f"brand_kcar_{path}"
+            display_text = mnuftr_enm
+
+            markup.add(
+                types.InlineKeyboardButton(display_text, callback_data=callback_data)
+            )
+
+        bot.edit_message_text(
+            "Выбери марку автомобиля:",
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            reply_markup=markup,
+        )
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("brand_"))
 def handle_brand_selection(call):
     parts = call.data.split("_", 3)
     source = parts[1]
-    eng_name = parts[2]
-    kr_name = parts[3]
 
     if source == "encar":
+        eng_name = parts[2]
+        kr_name = parts[3]
+
+        # ... существующий код для Encar ...
         models = get_models_by_brand(kr_name)
         if not models:
             bot.answer_callback_query(call.id, "Не удалось загрузить модели.")
@@ -612,6 +643,67 @@ def handle_brand_selection(call):
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
             reply_markup=markup,
+        )
+    elif source == "kcar":
+        # Для KCar у нас только код производителя в формате brand_kcar_{path}
+        mnuftr_path = parts[2]
+
+        # Получаем данные о производителе снова, чтобы отобразить имя
+        manufacturers = get_kcar_manufacturers()
+        selected_manufacturer = next(
+            (m for m in manufacturers if m.get("path") == mnuftr_path), None
+        )
+
+        if not selected_manufacturer:
+            bot.answer_callback_query(call.id, "Производитель не найден.")
+            return
+
+        manufacturer_name = selected_manufacturer.get("mnuftrEnm", "Без названия")
+
+        # Получаем модели для выбранного производителя
+        models = get_kcar_models(mnuftr_path)
+        if not models:
+            bot.answer_callback_query(call.id, "Не удалось загрузить модели.")
+            return
+
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        for model in models:
+            model_name = model.get("modelGrpNm", "Без названия")
+            model_grp_cd = model.get("modelGrpCd", "")
+            car_count = model.get("count", 0)
+
+            # Добавляем количество доступных автомобилей в название кнопки
+            # Отображаем модели только если есть доступные автомобили
+            if car_count > 0:
+                display_text = f"{model_name} ({car_count})"
+
+                # Используем mnuftr_path и model_grp_cd в callback_data
+                callback_data = f"model_kcar_{mnuftr_path}_{model_grp_cd}"
+
+                markup.add(
+                    types.InlineKeyboardButton(
+                        display_text, callback_data=callback_data
+                    )
+                )
+
+        bot.edit_message_text(
+            f"Марка: {manufacturer_name}\nТеперь выбери модель:",
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            reply_markup=markup,
+        )
+
+        # Сохраним данные о производителе в user_search_data
+        user_id = call.from_user.id
+        if user_id not in user_search_data:
+            user_search_data[user_id] = {}
+
+        user_search_data[user_id].update(
+            {
+                "manufacturer": manufacturer_name,
+                "source": "kcar",
+                "mnuftr_path": mnuftr_path,
+            }
         )
 
 
@@ -775,6 +867,85 @@ def handle_model_selection(call):
 
         bot.edit_message_text(
             f"Марка: {brand}\nМодель: {model}\nТеперь выбери поколение:",
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            reply_markup=markup,
+        )
+
+    elif source == "kcar":
+        # Для KCar формат: model_kcar_mnuftr_path_model_grp_cd
+        mnuftr_path = parts[2]
+        model_grp_cd = parts[3]
+
+        # Получаем данные о пользователе
+        user_id = call.from_user.id
+        if user_id not in user_search_data:
+            user_search_data[user_id] = {}
+
+        # Получаем данные о производителе
+        manufacturers = get_kcar_manufacturers()
+        selected_manufacturer = next(
+            (m for m in manufacturers if m.get("path") == mnuftr_path), None
+        )
+
+        if not selected_manufacturer:
+            bot.answer_callback_query(call.id, "Производитель не найден.")
+            return
+
+        manufacturer_name = selected_manufacturer.get("mnuftrEnm", "Без названия")
+
+        # Получаем данные о модели
+        models = get_kcar_models(mnuftr_path)
+        selected_model = next(
+            (m for m in models if m.get("modelGrpCd") == model_grp_cd), None
+        )
+
+        if not selected_model:
+            bot.answer_callback_query(call.id, "Модель не найдена.")
+            return
+
+        model_name = selected_model.get("modelGrpNm", "Без названия")
+
+        # Получаем список поколений для выбранной модели
+        generations = get_kcar_generations(mnuftr_path, model_grp_cd)
+        if not generations:
+            bot.answer_callback_query(call.id, "Не удалось загрузить поколения модели.")
+            return
+
+        # Создаем клавиатуру с поколениями
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        for gen in generations:
+            model_nm = gen.get("modelNm", "Без названия")
+            model_cd = gen.get("modelCd", "")
+            car_count = gen.get("count", 0)
+            production_year = gen.get("prdcnYear", "")
+
+            # Переводим название поколения
+            translated_model_nm = translate_phrase(model_nm)
+
+            # Добавляем только модели с доступными автомобилями
+            if car_count > 0:
+                display_text = f"{translated_model_nm} {production_year} ({car_count})"
+                callback_data = (
+                    f"generation_kcar_{mnuftr_path}_{model_grp_cd}_{model_cd}"
+                )
+
+                markup.add(
+                    types.InlineKeyboardButton(
+                        display_text, callback_data=callback_data
+                    )
+                )
+
+        # Сохраняем данные о выбранной модели
+        user_search_data[user_id].update(
+            {
+                "model_group": model_name,
+                "model_grp_cd": model_grp_cd,
+            }
+        )
+
+        bot.edit_message_text(
+            f"Марка: {manufacturer_name}\nМодель: {model_name}\nВыберите поколение:",
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
             reply_markup=markup,
@@ -990,6 +1161,119 @@ def handle_generation_selection(call):
             reply_markup=markup,
         )
 
+    elif source == "kcar":
+        # Для KCar формат: generation_kcar_mnuftr_path_model_grp_cd_model_cd
+        if len(parts) < 5:
+            bot.answer_callback_query(call.id, "Неверный формат данных.")
+            return
+
+        mnuftr_path = parts[2]
+        model_grp_cd = parts[3]
+        model_cd = parts[4]
+
+        print(
+            f"🔍 DEBUG KCar - mnuftr_path: {mnuftr_path}, model_grp_cd: {model_grp_cd}, model_cd: {model_cd}"
+        )
+
+        # Получаем информацию о пользователе
+        user_id = call.from_user.id
+        if user_id not in user_search_data:
+            user_search_data[user_id] = {}
+
+        # Получаем данные о поколении
+        generations = get_kcar_generations(mnuftr_path, model_grp_cd)
+        selected_generation = next(
+            (g for g in generations if g.get("modelCd") == model_cd), None
+        )
+
+        if not selected_generation:
+            bot.answer_callback_query(call.id, "Поколение не найдено.")
+            return
+
+        generation_name = selected_generation.get("modelNm", "")
+        translated_generation = translate_phrase(generation_name)
+
+        # Получаем информацию о производителе и модели из сообщения
+        message_text = call.message.text
+        brand_line = next(
+            (line for line in message_text.split("\n") if "Марка:" in line), ""
+        )
+        model_line = next(
+            (line for line in message_text.split("\n") if "Модель:" in line), ""
+        )
+
+        brand = brand_line.replace("Марка:", "").strip()
+        model = model_line.replace("Модель:", "").strip()
+
+        # Определяем диапазон годов выпуска
+        production_year = selected_generation.get("prdcnYear", "")
+
+        # Извлекаем годы из строки формата "(19~22년)" или "(22년~현재)"
+        from_year = None
+        to_year = None
+
+        if production_year:
+            # Убираем скобки и делим по символу ~
+            year_range = production_year.strip("()").split("~")
+            if len(year_range) == 2:
+                from_year_str = year_range[0].strip("년")
+                to_year_str = year_range[1].strip("년현재")
+
+                # Определяем базовый год (2000 или 1900)
+                base_year = 2000 if len(from_year_str) <= 2 else 1900
+
+                # Преобразуем строки в числа
+                try:
+                    from_year = int(from_year_str) + (
+                        base_year if len(from_year_str) <= 2 else 0
+                    )
+
+                    if to_year_str:  # Если не пустая строка (не "현재")
+                        to_year = int(to_year_str) + (
+                            base_year if len(to_year_str) <= 2 else 0
+                        )
+                    else:
+                        to_year = datetime.now().year
+                except ValueError:
+                    from_year = datetime.now().year - 5
+                    to_year = datetime.now().year
+
+        # Если не удалось извлечь годы из строки, используем значения по умолчанию
+        if not from_year or not to_year:
+            from_year = datetime.now().year - 5
+            to_year = datetime.now().year
+
+        print(f"🔍 DEBUG KCar - Годы выпуска: с {from_year} по {to_year}")
+
+        # Создаем клавиатуру для выбора года
+        year_markup = types.InlineKeyboardMarkup(row_width=4)
+        for y in range(from_year, to_year + 1):
+            year_markup.add(
+                types.InlineKeyboardButton(
+                    str(y),
+                    callback_data=f"year_kcar_{mnuftr_path}_{model_grp_cd}_{model_cd}_{y}",
+                )
+            )
+
+        # Сохраняем данные о выбранном поколении
+        user_search_data[user_id].update(
+            {
+                "generation": translated_generation,
+                "generation_kr": generation_name,
+                "model_cd": model_cd,
+            }
+        )
+
+        print(f"✅ Saved user data: {user_search_data[user_id]}")
+
+        # Отправляем сообщение с выбором года
+        bot.edit_message_text(
+            f"Марка: {brand}\nМодель: {model}\nПоколение: {translated_generation}\nТеперь выберите год выпуска:",
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            reply_markup=year_markup,
+        )
+
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("trim_"))
 def handle_trim_selection(call):
@@ -1084,8 +1368,8 @@ def handle_trim_selection(call):
                 "model_group_eng": model_eng.strip(),
                 "model": model_kr.strip(),
                 "model_eng": model_eng.strip(),
-                "generation": generation_eng.strip(),
-                "generation_kr": generation_kr.strip(),
+                "generation": generation_eng,
+                "generation_kr": generation_kr,
                 "trim": trim_kr.strip(),
                 "trim_eng": trim_eng.strip(),
                 "source": source,
@@ -1109,7 +1393,7 @@ def handle_trim_selection(call):
         )
 
     elif source == "kbchachacha":
-        # Handle KBChaChaCha format: trim_kbchachacha_maker_code_class_code_car_code_model_code
+        # Handle KBChaChaCha format: trim_kbchachacha_maker_code_class_code_car_code_model_grade_code
         if len(parts) < 6:
             bot.answer_callback_query(call.id, "Неверный формат данных.")
             return
@@ -1117,19 +1401,34 @@ def handle_trim_selection(call):
         maker_code = parts[2]
         class_code = parts[3]
         car_code = parts[4]
-        model_code = parts[5]
+        model_grade_code = parts[5]  # Now this can be "27034|002" format
 
-        # Get model name from the API first
+        print(f"🔍 DEBUG KBChaChaCha callback data: {call.data}")
+        print(f"🔍 DEBUG model_grade_code: {model_grade_code}")
+
+        # Split model_grade_code if it contains the separator
+        if "|" in model_grade_code:
+            model_code, grade_code = model_grade_code.split("|")
+        else:
+            model_code = model_grade_code
+            grade_code = "002"  # Default grade code
+
+        print(f"🔍 DEBUG model_code: {model_code}, grade_code: {grade_code}")
+
+        # Get model data from the API again to ensure we have fresh data
         models = get_kbchachacha_models_by_generation(maker_code, class_code, car_code)
         selected_model = next(
             (m for m in models if m.get("modelCode") == model_code), None
         )
 
         if not selected_model:
+            print(f"❌ ERROR: Model not found for model_code {model_code}")
+            print(f"Available models: {[m.get('modelCode') for m in models]}")
             bot.answer_callback_query(call.id, "Модель не найдена.")
             return
 
         model_name = selected_model.get("modelName", "")
+        print(f"✅ Found model: {model_name}")
 
         message_text = call.message.text
         brand_line = next(
@@ -1188,7 +1487,7 @@ def handle_trim_selection(call):
                 "class_code": class_code,
                 "car_code": car_code,
                 "model_code": model_code,
-                "model_grade_code": f"{model_code}|002",
+                "model_grade_code": model_grade_code,
                 "year": from_year,  # Устанавливаем начальный год как значение по умолчанию
             }
         )
@@ -1196,8 +1495,119 @@ def handle_trim_selection(call):
         print(f"✅ DEBUG Сохраненные данные для пользователя {user_id}:")
         print(user_search_data[user_id])
 
+        # Get the car name (generation) from the selected generation
+        generation_name = selected_generation.get("carName", "")
+
         bot.edit_message_text(
-            f"Марка: {brand}\nМодель: {model_name}\nТеперь выбери год выпуска автомобиля:",
+            f"Марка: {brand}\nМодель: {generation_name}\nМодификация: {model_name}\nТеперь выбери год выпуска автомобиля:",
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            reply_markup=year_markup,
+        )
+
+    elif source == "kcar":
+        # Handle KCar format: trim_kcar_mnuftr_path_model_grp_cd_model_grade_code
+        if len(parts) < 6:
+            bot.answer_callback_query(call.id, "Неверный формат данных.")
+            return
+
+        mnuftr_path = parts[2]
+        model_grp_cd = parts[3]
+        model_grade_code = parts[4]  # Now this can be "27034|002" format
+
+        print(f"🔍 DEBUG KCar callback data: {call.data}")
+        print(f"🔍 DEBUG model_grade_code: {model_grade_code}")
+
+        # Split model_grade_code if it contains the separator
+        if "|" in model_grade_code:
+            model_code, grade_code = model_grade_code.split("|")
+        else:
+            model_code = model_grade_code
+            grade_code = "002"  # Default grade code
+
+        print(f"🔍 DEBUG model_code: {model_code}, grade_code: {grade_code}")
+
+        # Get model data from the API again to ensure we have fresh data
+        models = get_kcar_models(mnuftr_path)
+        selected_model = next(
+            (m for m in models if m.get("modelGrpCd") == model_code), None
+        )
+
+        if not selected_model:
+            print(f"❌ ERROR: Model not found for model_code {model_code}")
+            print(f"Available models: {[m.get('modelGrpCd') for m in models]}")
+            bot.answer_callback_query(call.id, "Модель не найдена.")
+            return
+
+        model_name = selected_model.get("modelGrpNm", "")
+        print(f"✅ Found model: {model_name}")
+
+        message_text = call.message.text
+        brand_line = next(
+            (line for line in message_text.split("\n") if "Марка:" in line), ""
+        )
+        model_line = next(
+            (line for line in message_text.split("\n") if "Модель:" in line), ""
+        )
+        # Извлекаем название марки и модели
+        brand = brand_line.replace("Марка:", "").strip()
+        model = model_line.replace("Модель:", "").strip()
+
+        # Get the generation to determine the year range
+        generations = get_kcar_generations(mnuftr_path, model_grp_cd)
+        selected_generation = None
+        for gen in generations:
+            if gen.get("modelCode") == model_code:
+                selected_generation = gen
+                break
+
+        if not selected_generation:
+            bot.answer_callback_query(call.id, "Не удалось определить поколение.")
+            return
+
+        from_year = int(selected_generation.get("fromYear", datetime.now().year))
+        to_year_str = selected_generation.get("toYear", "")
+
+        # If toYear is "현재" (current) or empty, use current year
+        if to_year_str == "현재" or not to_year_str:
+            to_year = datetime.now().year
+        else:
+            to_year = int(to_year_str)
+
+        # Create year selection markup
+        year_markup = types.InlineKeyboardMarkup(row_width=4)
+        for y in range(from_year, to_year + 1):
+            year_markup.add(
+                types.InlineKeyboardButton(
+                    str(y),
+                    callback_data=f"year_kcar_{mnuftr_path}_{model_grp_cd}_{model_code}_{model_grade_code}_{y}",
+                )
+            )
+
+        # Save the selected data for later use
+        user_id = call.from_user.id
+        if user_id not in user_search_data:
+            user_search_data[user_id] = {}
+
+        user_search_data[user_id].update(
+            {
+                "manufacturer": brand,
+                "model_group": model_name,
+                "model_grp_cd": model_grp_cd,
+                "model_code": model_code,
+                "model_grade_code": model_grade_code,
+                "year": from_year,  # Устанавливаем начальный год как значение по умолчанию
+            }
+        )
+
+        print(f"✅ DEBUG Сохраненные данные для пользователя {user_id}:")
+        print(user_search_data[user_id])
+
+        # Get the car name (generation) from the selected generation
+        generation_name = selected_generation.get("mdlNm", "")
+
+        bot.edit_message_text(
+            f"Марка: {brand}\nМодель: {model_name}\nМодификация: {model_name}\nТеперь выбери год выпуска автомобиля:",
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
             reply_markup=year_markup,
@@ -1206,6 +1616,7 @@ def handle_trim_selection(call):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("year_"))
 def handle_year_selection(call):
+    print(f"🔍 DEBUG: Получен callback для выбора года: {call.data}")
     parts = call.data.split("_")
     source = parts[1]
 
@@ -1224,8 +1635,10 @@ def handle_year_selection(call):
         if user_id not in user_search_data:
             user_search_data[user_id] = {}
 
+        # Preserve existing data like model_grade_code instead of overwriting it
+        existing_data = user_search_data[user_id].copy()
         # Update with KBChaChaCha specific data
-        user_search_data[user_id].update(
+        existing_data.update(
             {
                 "year": selected_year,
                 "source": source,
@@ -1233,10 +1646,14 @@ def handle_year_selection(call):
                 "class_code": class_code,
                 "car_code": car_code,
                 "model_code": model_code,
-                "model_grade_code": f"{model_code}|002",
             }
         )
-    else:
+        # Only set model_grade_code if it doesn't already exist
+        if "model_grade_code" not in existing_data:
+            existing_data["model_grade_code"] = f"{model_code}|002"
+
+        user_search_data[user_id] = existing_data
+    elif source == "encar":
         # Handle Encar format: year_encar_year
         selected_year = int(parts[2])
 
@@ -1245,7 +1662,116 @@ def handle_year_selection(call):
             user_search_data[user_id] = {}
         user_search_data[user_id]["year"] = selected_year
         user_search_data[user_id]["source"] = source
+    elif source == "kcar":
+        # Handle KCar format: year_kcar_mnuftr_path_model_grp_cd_model_cd_year
+        if len(parts) < 6:
+            bot.answer_callback_query(call.id, "Неверный формат данных.")
+            print(f"❌ ERROR: Неверный формат данных callback: {call.data}")
+            return
 
+        mnuftr_path = parts[2]
+        model_grp_cd = parts[3]
+        model_cd = parts[4]
+        selected_year = int(parts[5])
+
+        print(
+            f"🔍 DEBUG KCar - mnuftr_path: {mnuftr_path}, model_grp_cd: {model_grp_cd}, model_cd: {model_cd}, year: {selected_year}"
+        )
+
+        user_id = call.from_user.id
+        if user_id not in user_search_data:
+            user_search_data[user_id] = {}
+
+        # Обновляем данные пользователя с выбранным годом
+        user_search_data[user_id].update(
+            {
+                "year": selected_year,
+                "source": source,
+                "mnuftr_path": mnuftr_path,
+                "model_grp_cd": model_grp_cd,
+                "model_cd": model_cd,
+            }
+        )
+
+        print(f"✅ DEBUG user_data after year selection: {user_search_data[user_id]}")
+
+        # Получаем список конфигураций для выбранного поколения
+        try:
+            configurations = get_kcar_configurations(
+                mnuftr_path, model_grp_cd, model_cd
+            )
+            print(f"🔍 DEBUG: Получено конфигураций: {len(configurations)}")
+
+            if not configurations:
+                bot.answer_callback_query(call.id, "Не удалось загрузить конфигурации.")
+                print("❌ ERROR: Пустой список конфигураций")
+                return
+
+            # Создаем клавиатуру для выбора конфигурации
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            for config in configurations:
+                grd_nm = config.get("grdNm", "Без названия")
+                grd_cd = config.get("grdCd", "")
+                car_count = config.get("count", 0)
+
+                print(
+                    f"🔍 DEBUG: Конфигурация {grd_nm} (код: {grd_cd}, количество: {car_count})"
+                )
+
+                # Переводим название конфигурации
+                translated_grd_nm = translate_phrase(grd_nm)
+
+                # Добавляем только конфигурации с доступными автомобилями
+                if car_count > 0:
+                    display_text = f"{translated_grd_nm} ({car_count})"
+                    callback_data = f"config_kcar_{mnuftr_path}_{model_grp_cd}_{model_cd}_{grd_cd}_{selected_year}"
+
+                    print(
+                        f"🔍 DEBUG: Добавляем кнопку: {display_text}, callback: {callback_data}"
+                    )
+
+                    markup.add(
+                        types.InlineKeyboardButton(
+                            display_text, callback_data=callback_data
+                        )
+                    )
+
+            # Получаем информацию о модели из текста сообщения
+            message_text = call.message.text
+            brand_line = next(
+                (line for line in message_text.split("\n") if "Марка:" in line), ""
+            )
+            model_line = next(
+                (line for line in message_text.split("\n") if "Модель:" in line), ""
+            )
+            generation_line = next(
+                (line for line in message_text.split("\n") if "Поколение:" in line), ""
+            )
+
+            brand = brand_line.replace("Марка:", "").strip()
+            model = model_line.replace("Модель:", "").strip()
+            generation = (
+                generation_line.replace("Поколение:", "").strip()
+                if generation_line
+                else ""
+            )
+
+            # Отправляем сообщение с выбором конфигурации
+            bot.edit_message_text(
+                f"Марка: {brand}\nМодель: {model}\nПоколение: {generation}\nГод: {selected_year}\nВыберите конфигурацию:",
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                reply_markup=markup,
+            )
+            return
+        except Exception as e:
+            print(f"❌ ERROR при получении конфигураций: {e}")
+            bot.answer_callback_query(
+                call.id, "Произошла ошибка при получении конфигураций."
+            )
+            return
+
+    # Если не был выбран KCar, используем общий код для Encar и KBChaChaCha
     print(f"✅ DEBUG user_data after year selection: {user_search_data[user_id]}")
 
     # Create mileage selection markup
@@ -1609,8 +2135,8 @@ def get_kbchachacha_manufacturers():
             if "수입" in data["result"]:  # Imported manufacturers
                 manufacturers.extend(data["result"]["수입"])
 
-            # Sort by count (number of available cars) in descending order
-            manufacturers.sort(key=lambda x: x.get("count", 0), reverse=True)
+            # Sort by title
+            manufacturers.sort(key=lambda x: x.get("makerName", ""))
             return manufacturers
         else:
             print(f"❌ Ошибка при получении производителей: {response.status_code}")
@@ -1654,7 +2180,7 @@ def get_kbchachacha_generations(maker_code, class_code):
             data = response.json()
             generations = data.get("result", {}).get("code", [])
 
-            # Sort generations by number of cars available (using the sale data)
+            # Get sale data and convert years
             sale_data = data.get("result", {}).get("sale", {})
             for gen in generations:
                 car_code = gen.get("carCode")
@@ -1664,8 +2190,9 @@ def get_kbchachacha_generations(maker_code, class_code):
                 if gen.get("toYear") == "현재":
                     gen["toYear"] = str(datetime.now().year)
 
-            generations.sort(key=lambda x: x.get("count", 0), reverse=True)
-            return generations
+            # Sort generations by fromYear
+            generations.sort(key=lambda x: int(x.get("fromYear", 0)))
+            return reversed(generations)
         else:
             print(f"❌ Ошибка при получении поколений: {response.status_code}")
             return []
@@ -1732,11 +2259,260 @@ def build_kbchachacha_url(
     return url
 
 
+def get_kcar_manufacturers():
+    url = "https://api.kcar.com/bc/search/group/mnuftr"
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    payload = {"wr_eq_sell_dcd": "ALL", "wr_in_multi_columns": "cntr_rgn_cd|cntr_cd"}
+
+    try:
+        response = requests.post(url, headers=headers, json=payload)
+        if response.status_code == 200:
+            data = response.json()
+            manufacturers = data.get("data", [])
+            # Сортируем по названию
+            manufacturers.sort(key=lambda x: x.get("mnuftrEnm", ""))
+            return manufacturers
+        else:
+            print(
+                f"❌ Ошибка при получении производителей KCar: {response.status_code}"
+            )
+            return []
+    except Exception as e:
+        print(f"❌ Ошибка при запросе производителей KCar: {e}")
+        return []
+
+
+# Заменяем функцию получения моделей KCar
+def get_kcar_models(mnuftr_cd):
+    url = "https://api.kcar.com/bc/search/group/modelGrp"
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    payload = {
+        "wr_eq_sell_dcd": "ALL",
+        "wr_in_multi_columns": "cntr_rgn_cd|cntr_cd",
+        "wr_eq_mnuftr_cd": mnuftr_cd,
+    }
+
+    try:
+        print(
+            f"DEBUG: Отправка запроса на API KCar для моделей производителя {mnuftr_cd}"
+        )
+        response = requests.post(url, headers=headers, json=payload)
+        if response.status_code == 200:
+            data = response.json()
+            models = data.get("data", [])
+            # Сортируем по количеству доступных автомобилей (в порядке убывания)
+            models.sort(key=lambda x: x.get("count", 0), reverse=True)
+            print(f"DEBUG: Получено {len(models)} моделей KCar")
+            return models
+        else:
+            print(f"❌ Ошибка при получении моделей KCar: {response.status_code}")
+            try:
+                print(f"❌ Ответ API: {response.json()}")
+            except:
+                print(f"❌ Ответ API: {response.text}")
+            return []
+    except Exception as e:
+        print(f"❌ Ошибка при запросе моделей KCar: {e}")
+        return []
+
+
+# Обновляем функцию для получения поколений KCar
+def get_kcar_generations(mnuftr_cd, model_grp_cd):
+    url = "https://api.kcar.com/bc/search/group/model"
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    payload = {
+        "wr_eq_sell_dcd": "ALL",
+        "wr_in_multi_columns": "cntr_rgn_cd|cntr_cd",
+        "wr_eq_mnuftr_cd": mnuftr_cd,
+        "wr_eq_model_grp_cd": model_grp_cd,
+    }
+
+    try:
+        print(
+            f"DEBUG: Отправка запроса на API KCar для поколений модели {model_grp_cd}"
+        )
+        response = requests.post(url, headers=headers, json=payload)
+        if response.status_code == 200:
+            data = response.json()
+            generations = data.get("data", [])
+            # Сортируем по количеству доступных автомобилей
+            generations.sort(key=lambda x: x.get("count", 0), reverse=True)
+            print(f"DEBUG: Получено {len(generations)} поколений KCar")
+            return generations
+        else:
+            print(f"❌ Ошибка при получении поколений KCar: {response.status_code}")
+            try:
+                print(f"❌ Ответ API: {response.json()}")
+            except:
+                print(f"❌ Ответ API: {response.text}")
+            return []
+    except Exception as e:
+        print(f"❌ Ошибка при запросе поколений KCar: {e}")
+        return []
+
+
+# Функция для получения конфигураций для выбранного поколения KCar
+def get_kcar_configurations(mnuftr_path, model_grp_cd, model_cd):
+    url = "https://api.kcar.com/bc/search/group/grd"
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    payload = {
+        "wr_eq_sell_dcd": "ALL",
+        "wr_in_multi_columns": "cntr_rgn_cd|cntr_cd",
+        "wr_eq_mnuftr_path": mnuftr_path,
+        "wr_eq_model_grp_cd": model_grp_cd,
+        "wr_eq_model_cd": model_cd,
+    }
+
+    try:
+        print(f"DEBUG: Отправка запроса на API KCar для конфигураций модели {model_cd}")
+        print(f"DEBUG: URL: {url}")
+        print(f"DEBUG: Payload: {payload}")
+
+        response = requests.post(url, headers=headers, json=payload)
+        print(f"DEBUG: Статус ответа: {response.status_code}")
+
+        if response.status_code == 200:
+            try:
+                data = response.json()
+                print(f"DEBUG: Успешно получен ответ JSON")
+                configurations = data.get("data", [])
+                # Сортируем по количеству доступных автомобилей
+                configurations.sort(key=lambda x: x.get("count", 0), reverse=True)
+                print(f"DEBUG: Получено {len(configurations)} конфигураций KCar")
+
+                if len(configurations) > 0:
+                    print(f"DEBUG: Первая конфигурация: {configurations[0]}")
+
+                return configurations
+            except Exception as json_err:
+                print(f"DEBUG: Ошибка парсинга JSON: {json_err}")
+                print(f"DEBUG: Текст ответа: {response.text[:500]}")
+                return []
+        else:
+            print(f"❌ Ошибка при получении конфигураций KCar: {response.status_code}")
+            try:
+                print(f"❌ Ответ API: {response.json()}")
+            except:
+                print(f"❌ Ответ API: {response.text[:500]}")
+            return []
+    except Exception as e:
+        print(f"❌ Ошибка при запросе конфигураций KCar: {e}")
+        return []
+
+
+# Добавляем обработчик выбора конфигурации для KCar
+@bot.callback_query_handler(func=lambda call: call.data.startswith("config_"))
+def handle_config_selection(call):
+    parts = call.data.split("_")
+    source = parts[1]
+
+    if source == "kcar":
+        # Для KCar формат: config_kcar_mnuftr_path_model_grp_cd_model_cd_grd_cd_year
+        if len(parts) < 7:
+            bot.answer_callback_query(call.id, "Неверный формат данных.")
+            return
+
+        mnuftr_path = parts[2]
+        model_grp_cd = parts[3]
+        model_cd = parts[4]
+        grd_cd = parts[5]
+        selected_year = int(parts[6])
+
+        user_id = call.from_user.id
+        if user_id not in user_search_data:
+            user_search_data[user_id] = {}
+
+        # Получаем список конфигураций, чтобы найти выбранную
+        configurations = get_kcar_configurations(mnuftr_path, model_grp_cd, model_cd)
+        selected_config = next(
+            (c for c in configurations if c.get("grdCd") == grd_cd), None
+        )
+
+        if not selected_config:
+            bot.answer_callback_query(call.id, "Конфигурация не найдена.")
+            return
+
+        config_name = selected_config.get("grdNm", "")
+        translated_config = translate_phrase(config_name)
+
+        # Сохраняем данные о выбранной конфигурации
+        user_search_data[user_id].update(
+            {
+                "grd_cd": grd_cd,
+                "config": translated_config,
+                "config_kr": config_name,
+            }
+        )
+
+        print(f"✅ DEBUG user_data after config selection: {user_search_data[user_id]}")
+
+        # Создаем клавиатуру для выбора пробега
+        mileage_markup = types.InlineKeyboardMarkup(row_width=4)
+        for value in range(0, 200001, 10000):
+            mileage_markup.add(
+                types.InlineKeyboardButton(
+                    f"{value} км",
+                    callback_data=f"mileage_from_kcar_{selected_year}_{value}",
+                )
+            )
+
+        # Получаем информацию о модели из текста сообщения
+        message_text = call.message.text
+        brand_line = next(
+            (line for line in message_text.split("\n") if "Марка:" in line), ""
+        )
+        model_line = next(
+            (line for line in message_text.split("\n") if "Модель:" in line), ""
+        )
+        generation_line = next(
+            (line for line in message_text.split("\n") if "Поколение:" in line), ""
+        )
+
+        brand = brand_line.replace("Марка:", "").strip()
+        model = model_line.replace("Модель:", "").strip()
+        generation = (
+            generation_line.replace("Поколение:", "").strip() if generation_line else ""
+        )
+
+        bot.edit_message_text(
+            f"Марка: {brand}\nМодель: {model}\nПоколение: {generation}\n"
+            f"Год: {selected_year}\nКонфигурация: {translated_config}\n"
+            f"Выберите минимальный пробег:",
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            reply_markup=mileage_markup,
+        )
+
+
 if __name__ == "__main__":
     print("Starting Telegram bot...")
     print("Bot username: @{}".format(bot.get_me().username))
     print("Press Ctrl+C to stop the bot")
     try:
+        bot.infinity_polling(none_stop=True)
+    except KeyboardInterrupt:
+        print("\nBot stopped by user")
+        sys.exit(0)
+    except Exception as e:
+        print(f"\nError occurred: {e}")
+        sys.exit(1)
+
         bot.infinity_polling(none_stop=True)
     except KeyboardInterrupt:
         print("\nBot stopped by user")
