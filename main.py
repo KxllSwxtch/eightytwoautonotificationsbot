@@ -10,6 +10,7 @@ from telebot.storage import StateMemoryStorage
 from dotenv import load_dotenv
 from datetime import datetime
 from translations import translations
+from bs4 import BeautifulSoup
 
 # Путь до файла
 REQUESTS_FILE = "requests.json"
@@ -17,6 +18,23 @@ ACCESS_FILE = "access.json"
 
 # Глобальный словарь всех запросов пользователей
 user_requests = {}
+
+# Словарь переводов цветов для KbChaChaCha
+KBCHACHA_COLOR_TRANSLATIONS = {
+    "검정색": {"ru": "Чёрный", "code": "006001"},
+    "흰색": {"ru": "Белый", "code": "006002"},
+    "은색": {"ru": "Серебристый", "code": "006003"},
+    "진주색": {"ru": "Жемчужный", "code": "006004"},
+    "회색": {"ru": "Серый", "code": "006005"},
+    "빨간색": {"ru": "Красный", "code": "006006"},
+    "파란색": {"ru": "Синий", "code": "006007"},
+    "주황색": {"ru": "Оранжевый", "code": "006008"},
+    "갈색": {"ru": "Коричневый", "code": "006009"},
+    "초록색": {"ru": "Зелёный", "code": "006010"},
+    "노란색": {"ru": "Жёлтый", "code": "006011"},
+    "보라색": {"ru": "Фиолетовый", "code": "006012"},
+    "Любой": {"ru": "Любой", "code": ""},
+}
 
 
 def load_access():
@@ -419,6 +437,33 @@ def handle_delete_all_requests(call):
 
 @bot.callback_query_handler(func=lambda call: call.data == "search_car")
 def handle_search_car(call):
+    # Создаем клавиатуру с выбором площадок
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        types.InlineKeyboardButton("Encar", callback_data="platform_encar"),
+        types.InlineKeyboardButton("KbChaChaCha", callback_data="platform_kbchachacha"),
+        types.InlineKeyboardButton("KCar", callback_data="platform_kcar"),
+    )
+
+    bot.send_message(
+        call.message.chat.id, "Выберите площадку для поиска:", reply_markup=markup
+    )
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("platform_"))
+def handle_platform_selection(call):
+    platform = call.data.split("_")[1]
+
+    if platform == "encar":
+        handle_encar_search(call)
+    elif platform == "kbchachacha":
+        handle_kbchachacha_search(call)
+    elif platform == "kcar":
+        # Будет реализовано позже
+        bot.answer_callback_query(call.id, "Функционал KCar будет добавлен позже")
+
+
+def handle_encar_search(call):
     manufacturers = get_manufacturers()
     if not manufacturers:
         bot.answer_callback_query(call.id, "Не удалось загрузить марки.")
@@ -1141,6 +1186,634 @@ def handle_remove_user(message):
             bot.reply_to(message, "⚠️ Этот пользователь не найден в списке доступа.")
     except Exception as e:
         bot.reply_to(message, f"⚠️ Ошибка: {e}")
+
+
+# Функции для работы с KbChaChaCha
+def get_kbchachacha_manufacturers():
+    """Получение списка производителей с KbChaChaCha"""
+    url = (
+        "https://www.kbchachacha.com/public/search/carMaker.json?page=1&sort=-orderDate"
+    )
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        response = requests.get(url, headers=headers)
+        data = response.json()
+        # Получаем список как импортных, так и корейских производителей
+        import_manufacturers = data.get("result", {}).get(
+            "수입", []
+        )  # 수입 = импортные
+        korean_manufacturers = data.get("result", {}).get(
+            "국산", []
+        )  # 국산 = корейские
+
+        # Объединяем списки
+        all_manufacturers = korean_manufacturers + import_manufacturers
+
+        # Сортируем по имени производителя
+        all_manufacturers.sort(key=lambda x: x.get("makerName", ""))
+
+        return all_manufacturers
+    except Exception as e:
+        print("Ошибка при получении марок из KbChaChaCha:", e)
+        return []
+
+
+def get_kbchachacha_models(maker_code):
+    """Получение списка моделей по ID производителя с KbChaChaCha"""
+    url = f"https://www.kbchachacha.com/public/search/carClass.json?makerCode={maker_code}&page=1&sort=-orderDate"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        response = requests.get(url, headers=headers)
+        data = response.json()
+        models = data.get("result", {}).get("code", [])
+        # Сортируем по имени модели
+        models.sort(key=lambda x: x.get("className", ""))
+        return models
+    except Exception as e:
+        print(f"Ошибка при получении моделей с KbChaChaCha для {maker_code}:", e)
+        return []
+
+
+def get_kbchachacha_generations(maker_code, class_code):
+    """Получение списка поколений по коду марки и модели с KbChaChaCha"""
+    url = f"https://www.kbchachacha.com/public/search/carName.json?makerCode={maker_code}&page=1&sort=-orderDate&classCode={class_code}"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        response = requests.get(url, headers=headers)
+        data = response.json()
+        generations = data.get("result", {}).get("code", [])
+        # Сортируем по порядку поколений
+        generations.sort(key=lambda x: x.get("carOrder", 999))
+        return generations
+    except Exception as e:
+        print(
+            f"Ошибка при получении поколений с KbChaChaCha для {maker_code}/{class_code}:",
+            e,
+        )
+        return []
+
+
+def get_kbchachacha_trims(maker_code, class_code, car_code):
+    """Получение списка конфигураций по коду марки, модели и поколения с KbChaChaCha"""
+    url = f"https://www.kbchachacha.com/public/search/carModel.json?makerCode={maker_code}&page=1&sort=-orderDate&classCode={class_code}&carCode={car_code}"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        response = requests.get(url, headers=headers)
+        data = response.json()
+        trims = data.get("result", {}).get("codeModel", [])
+        # Сортируем по порядку конфигураций
+        trims.sort(key=lambda x: x.get("modelOrder", 999))
+        return trims
+    except Exception as e:
+        print(
+            f"Ошибка при получении конфигураций с KbChaChaCha для {maker_code}/{class_code}/{car_code}:",
+            e,
+        )
+        return []
+
+
+def handle_kbchachacha_search(call):
+    # Получаем список производителей
+    manufacturers = get_kbchachacha_manufacturers()
+    if not manufacturers:
+        bot.answer_callback_query(call.id, "Не удалось загрузить марки из KbChaChaCha.")
+        return
+
+    # Создаем клавиатуру с марками
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    for item in manufacturers:
+        maker_name = item.get("makerName", "Без названия")
+        maker_code = item.get("makerCode", "")
+        # Используем специальный префикс для отличия от других площадок
+        callback_data = f"kbcha_brand_{maker_code}_{maker_name}"
+        markup.add(types.InlineKeyboardButton(maker_name, callback_data=callback_data))
+
+    bot.send_message(
+        call.message.chat.id, "Выберите марку автомобиля:", reply_markup=markup
+    )
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("kbcha_brand_"))
+def handle_kbcha_brand_selection(call):
+    # Парсим данные из callback_data
+    parts = call.data.split("_", 3)
+    maker_code = parts[2]
+    maker_name = parts[3] if len(parts) > 3 else "Неизвестно"
+
+    # Сохраняем выбранную марку у пользователя для дальнейшего использования
+    user_id = call.from_user.id
+    if user_id not in user_search_data:
+        user_search_data[user_id] = {}
+
+    user_search_data[user_id]["kbcha_maker_code"] = maker_code
+    user_search_data[user_id]["kbcha_maker_name"] = maker_name
+
+    # Получаем список моделей для выбранной марки
+    models = get_kbchachacha_models(maker_code)
+    if not models:
+        bot.send_message(
+            call.message.chat.id, f"Не удалось загрузить модели для {maker_name}"
+        )
+        return
+
+    # Создаем клавиатуру с моделями
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    for item in models:
+        class_name = item.get("className", "Без названия")
+        class_code = item.get("classCode", "")
+        callback_data = f"kbcha_model_{class_code}_{class_name}"
+        markup.add(types.InlineKeyboardButton(class_name, callback_data=callback_data))
+
+    bot.send_message(
+        call.message.chat.id,
+        f"Марка: {maker_name}\nВыберите модель:",
+        reply_markup=markup,
+    )
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("kbcha_model_"))
+def handle_kbcha_model_selection(call):
+    # Парсим данные из callback_data
+    parts = call.data.split("_", 3)
+    class_code = parts[2]
+    class_name = parts[3] if len(parts) > 3 else "Неизвестно"
+
+    # Сохраняем выбранную модель у пользователя для дальнейшего использования
+    user_id = call.from_user.id
+    if user_id not in user_search_data:
+        user_search_data[user_id] = {}
+
+    user_search_data[user_id]["kbcha_class_code"] = class_code
+    user_search_data[user_id]["kbcha_class_name"] = class_name
+
+    # Получаем информацию о марке
+    maker_name = user_search_data[user_id].get("kbcha_maker_name", "")
+    maker_code = user_search_data[user_id].get("kbcha_maker_code", "")
+
+    # Получаем список поколений для выбранной модели
+    generations = get_kbchachacha_generations(maker_code, class_code)
+    if not generations:
+        bot.send_message(
+            call.message.chat.id, f"Не удалось загрузить поколения для {class_name}"
+        )
+        return
+
+    # Создаем клавиатуру с поколениями
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    for item in generations:
+        car_name = item.get("carName", "Без названия")
+        car_code = item.get("carCode", "")
+        from_year = item.get("fromYear", "")
+        to_year = item.get("toYear", "")
+
+        # Форматируем период производства
+        year_period = f"({from_year}-{to_year})" if from_year and to_year else ""
+        if to_year == "현재":  # 현재 = "настоящее время" по-корейски
+            year_period = f"({from_year}-н.в.)"
+
+        display_text = f"{car_name} {year_period}"
+        callback_data = f"kbcha_gen_{car_code}_{car_name}"
+        markup.add(
+            types.InlineKeyboardButton(display_text, callback_data=callback_data)
+        )
+
+    bot.send_message(
+        call.message.chat.id,
+        f"Марка: {maker_name}\nМодель: {class_name}\nВыберите поколение:",
+        reply_markup=markup,
+    )
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("kbcha_gen_"))
+def handle_kbcha_generation_selection(call):
+    # Парсим данные из callback_data
+    parts = call.data.split("_", 3)
+    car_code = parts[2]
+    car_name = parts[3] if len(parts) > 3 else "Неизвестно"
+
+    # Сохраняем выбранное поколение у пользователя для дальнейшего использования
+    user_id = call.from_user.id
+    if user_id not in user_search_data:
+        user_search_data[user_id] = {}
+
+    user_search_data[user_id]["kbcha_car_code"] = car_code
+    user_search_data[user_id]["kbcha_car_name"] = car_name
+
+    # Получаем информацию о марке и модели
+    maker_name = user_search_data[user_id].get("kbcha_maker_name", "")
+    maker_code = user_search_data[user_id].get("kbcha_maker_code", "")
+    class_name = user_search_data[user_id].get("kbcha_class_name", "")
+    class_code = user_search_data[user_id].get("kbcha_class_code", "")
+
+    # Получаем список конфигураций для выбранного поколения
+    trims = get_kbchachacha_trims(maker_code, class_code, car_code)
+    if not trims:
+        bot.send_message(
+            call.message.chat.id, f"Не удалось загрузить конфигурации для {car_name}"
+        )
+        return
+
+    # Создаем клавиатуру с конфигурациями
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    for item in trims:
+        model_name = item.get("modelName", "Без названия")
+        model_code = item.get("modelCode", "")
+        callback_data = f"kbcha_trim_{model_code}_{model_name}"
+        markup.add(types.InlineKeyboardButton(model_name, callback_data=callback_data))
+
+    bot.send_message(
+        call.message.chat.id,
+        f"Марка: {maker_name}\nМодель: {class_name}\nПоколение: {car_name}\nВыберите конфигурацию:",
+        reply_markup=markup,
+    )
+
+
+def search_kbchachacha_cars(
+    maker_code,
+    class_code,
+    car_code,
+    model_code,
+    year_from=None,
+    year_to=None,
+    mileage_from=None,
+    mileage_to=None,
+    color_code=None,
+):
+    """
+    Поиск автомобилей на KbChaChaCha
+    """
+    # Базовый URL для поиска
+    url = f"https://www.kbchachacha.com/public/search/list.empty?makerCode={maker_code}&page=1&sort=-orderDate&classCode={class_code}&carCode={car_code}&modelCode={model_code}"
+
+    # Добавляем дополнительные параметры, если они указаны
+    if year_from and year_to:
+        url += f"&regiDay={year_from},{year_to}"
+
+    if mileage_from is not None and mileage_to is not None:
+        url += f"&km={mileage_from},{mileage_to}"
+
+    if color_code:
+        url += f"&color={color_code}"
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
+
+    try:
+        print(f"DEBUG: Отправка запроса на URL: {url}")
+        response = requests.get(url, headers=headers)
+        soup = BeautifulSoup(response.text, "html.parser")
+
+        # Ищем все блоки с автомобилями
+        car_areas = soup.select("div.list-in.type-wd-list div.area")
+
+        results = []
+        for area in car_areas[:5]:  # Ограничиваем до 5 результатов
+            try:
+                # Извлекаем данные об автомобиле
+                car_seq = area.get("data-car-seq", "")
+                car_link = f"https://www.kbchachacha.com/public/car/detail.kbc?carSeq={car_seq}"
+
+                # Извлекаем название автомобиля
+                car_title = area.select_one("div.con div.item strong.tit")
+                title = car_title.text.strip() if car_title else "Неизвестно"
+
+                # Извлекаем данные о годе, пробеге и регионе
+                data_line = area.select_one("div.con div.item div.data-line")
+                details = (
+                    [span.text.strip() for span in data_line.select("span")]
+                    if data_line
+                    else []
+                )
+                year = details[0] if len(details) > 0 else "Неизвестно"
+                mileage = details[1] if len(details) > 1 else "Неизвестно"
+                region = details[2] if len(details) > 2 else "Неизвестно"
+
+                # Извлекаем цену
+                price_elem = area.select_one(
+                    "div.con div.item div.sort-wrap strong.pay span.price"
+                )
+                price = price_elem.text.strip() if price_elem else "Неизвестно"
+
+                # Получаем ссылку на изображение
+                img_elem = area.select_one("div.thumnail a.item span.item__img img")
+                img_url = img_elem.get("src", "") if img_elem else ""
+
+                results.append(
+                    {
+                        "title": title,
+                        "year": year,
+                        "mileage": mileage,
+                        "region": region,
+                        "price": price,
+                        "link": car_link,
+                        "img_url": img_url,
+                    }
+                )
+            except Exception as e:
+                print(f"Ошибка при парсинге автомобиля: {e}")
+                continue
+
+        return results
+    except Exception as e:
+        print(f"Ошибка при поиске автомобилей на KbChaChaCha: {e}")
+        return []
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("kbcha_trim_"))
+def handle_kbcha_trim_selection(call):
+    # Парсим данные из callback_data
+    parts = call.data.split("_", 3)
+    model_code = parts[2]
+    model_name = parts[3] if len(parts) > 3 else "Неизвестно"
+
+    # Сохраняем выбранную конфигурацию у пользователя для дальнейшего использования
+    user_id = call.from_user.id
+    if user_id not in user_search_data:
+        user_search_data[user_id] = {}
+
+    user_search_data[user_id]["kbcha_model_code"] = model_code
+    user_search_data[user_id]["kbcha_model_name"] = model_name
+
+    # Получаем информацию о предыдущих выборах пользователя
+    maker_name = user_search_data[user_id].get("kbcha_maker_name", "")
+    maker_code = user_search_data[user_id].get("kbcha_maker_code", "")
+    class_name = user_search_data[user_id].get("kbcha_class_name", "")
+    class_code = user_search_data[user_id].get("kbcha_class_code", "")
+    car_name = user_search_data[user_id].get("kbcha_car_name", "")
+    car_code = user_search_data[user_id].get("kbcha_car_code", "")
+
+    # Показываем выбор года от
+    current_year = datetime.now().year
+    start_year = current_year - 5
+
+    markup = types.InlineKeyboardMarkup(row_width=3)
+    for year in range(start_year, current_year + 1):
+        markup.add(
+            types.InlineKeyboardButton(
+                f"{year}", callback_data=f"kbcha_year_from_{year}"
+            )
+        )
+
+    bot.send_message(
+        call.message.chat.id,
+        f"Марка: {maker_name}\nМодель: {class_name}\nПоколение: {car_name}\nКонфигурация: {model_name}\n\nВыберите начальный год выпуска:",
+        reply_markup=markup,
+    )
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("kbcha_year_from_"))
+def handle_kbcha_year_from_selection(call):
+    # Парсим выбранный год
+    year_from = call.data.split("_")[3]
+
+    # Сохраняем выбранный год начала
+    user_id = call.from_user.id
+    if user_id not in user_search_data:
+        user_search_data[user_id] = {}
+
+    user_search_data[user_id]["kbcha_year_from"] = year_from
+
+    # Показываем выбор года до
+    current_year = datetime.now().year
+    year_from_int = int(year_from)
+
+    markup = types.InlineKeyboardMarkup(row_width=3)
+    for year in range(year_from_int, current_year + 1):
+        markup.add(
+            types.InlineKeyboardButton(f"{year}", callback_data=f"kbcha_year_to_{year}")
+        )
+
+    bot.send_message(
+        call.message.chat.id,
+        f"Выбран начальный год: {year_from}\nТеперь выберите конечный год выпуска:",
+        reply_markup=markup,
+    )
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("kbcha_year_to_"))
+def handle_kbcha_year_to_selection(call):
+    # Парсим выбранный год
+    year_to = call.data.split("_")[3]
+
+    # Сохраняем выбранный год конца
+    user_id = call.from_user.id
+    if user_id not in user_search_data:
+        user_search_data[user_id] = {}
+
+    user_search_data[user_id]["kbcha_year_to"] = year_to
+
+    # Показываем выбор пробега от
+    markup = types.InlineKeyboardMarkup(row_width=3)
+    for mileage in [0, 10000, 20000, 30000, 50000, 70000, 100000]:
+        markup.add(
+            types.InlineKeyboardButton(
+                f"{mileage} км", callback_data=f"kbcha_mileage_from_{mileage}"
+            )
+        )
+
+    bot.send_message(
+        call.message.chat.id,
+        f"Выбран диапазон годов: {user_search_data[user_id]['kbcha_year_from']}-{year_to}\nТеперь выберите минимальный пробег:",
+        reply_markup=markup,
+    )
+
+
+@bot.callback_query_handler(
+    func=lambda call: call.data.startswith("kbcha_mileage_from_")
+)
+def handle_kbcha_mileage_from_selection(call):
+    # Парсим выбранный пробег
+    mileage_from = call.data.split("_")[3]
+
+    # Сохраняем выбранный минимальный пробег
+    user_id = call.from_user.id
+    if user_id not in user_search_data:
+        user_search_data[user_id] = {}
+
+    user_search_data[user_id]["kbcha_mileage_from"] = mileage_from
+
+    # Показываем выбор пробега до
+    markup = types.InlineKeyboardMarkup(row_width=3)
+    mileage_from_int = int(mileage_from)
+
+    for mileage in [50000, 100000, 150000, 200000, 250000, 300000]:
+        if mileage > mileage_from_int:
+            markup.add(
+                types.InlineKeyboardButton(
+                    f"{mileage} км", callback_data=f"kbcha_mileage_to_{mileage}"
+                )
+            )
+
+    bot.send_message(
+        call.message.chat.id,
+        f"Выбран минимальный пробег: {mileage_from} км\nТеперь выберите максимальный пробег:",
+        reply_markup=markup,
+    )
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("kbcha_mileage_to_"))
+def handle_kbcha_mileage_to_selection(call):
+    # Парсим выбранный пробег
+    mileage_to = call.data.split("_")[3]
+
+    # Сохраняем выбранный максимальный пробег
+    user_id = call.from_user.id
+    if user_id not in user_search_data:
+        user_search_data[user_id] = {}
+
+    user_search_data[user_id]["kbcha_mileage_to"] = mileage_to
+
+    # Показываем выбор цвета
+    markup = types.InlineKeyboardMarkup(row_width=2)
+
+    # Добавляем вариант "Любой"
+    markup.add(types.InlineKeyboardButton("Любой", callback_data="kbcha_color_Любой"))
+
+    # Добавляем доступные цвета
+    for kr_name, info in KBCHACHA_COLOR_TRANSLATIONS.items():
+        if kr_name != "Любой":  # Исключаем "Любой", так как мы его уже добавили выше
+            markup.add(
+                types.InlineKeyboardButton(
+                    info["ru"], callback_data=f"kbcha_color_{kr_name}"
+                )
+            )
+
+    bot.send_message(
+        call.message.chat.id,
+        f"Выбран диапазон пробега: {user_search_data[user_id]['kbcha_mileage_from']}-{mileage_to} км\nТеперь выберите цвет автомобиля:",
+        reply_markup=markup,
+    )
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("kbcha_color_"))
+def handle_kbcha_color_selection(call):
+    # Парсим выбранный цвет
+    color_kr = call.data.split("_")[2]
+
+    # Сохраняем выбранный цвет
+    user_id = call.from_user.id
+    if user_id not in user_search_data:
+        user_search_data[user_id] = {}
+
+    # Получаем русское название и код цвета
+    color_info = KBCHACHA_COLOR_TRANSLATIONS.get(
+        color_kr, {"ru": "Неизвестно", "code": ""}
+    )
+    color_ru = color_info["ru"]
+    color_code = color_info["code"]
+
+    user_search_data[user_id]["kbcha_color_kr"] = color_kr
+    user_search_data[user_id]["kbcha_color_ru"] = color_ru
+    user_search_data[user_id]["kbcha_color_code"] = color_code
+
+    # Получаем информацию о предыдущих выборах пользователя
+    maker_name = user_search_data[user_id].get("kbcha_maker_name", "")
+    maker_code = user_search_data[user_id].get("kbcha_maker_code", "")
+    class_name = user_search_data[user_id].get("kbcha_class_name", "")
+    class_code = user_search_data[user_id].get("kbcha_class_code", "")
+    car_name = user_search_data[user_id].get("kbcha_car_name", "")
+    car_code = user_search_data[user_id].get("kbcha_car_code", "")
+    model_name = user_search_data[user_id].get("kbcha_model_name", "")
+    model_code = user_search_data[user_id].get("kbcha_model_code", "")
+    year_from = user_search_data[user_id].get("kbcha_year_from", "")
+    year_to = user_search_data[user_id].get("kbcha_year_to", "")
+    mileage_from = user_search_data[user_id].get("kbcha_mileage_from", "")
+    mileage_to = user_search_data[user_id].get("kbcha_mileage_to", "")
+
+    # Отправляем сообщение о начале поиска
+    bot.send_message(
+        call.message.chat.id,
+        f"🔍 Ищем {maker_name} {class_name} {car_name} {model_name}, год: {year_from}-{year_to}, пробег: {mileage_from}-{mileage_to} км, цвет: {color_ru}...",
+    )
+
+    # Ищем автомобили с выбранными параметрами
+    cars = search_kbchachacha_cars(
+        maker_code,
+        class_code,
+        car_code,
+        model_code,
+        year_from,
+        year_to,
+        mileage_from,
+        mileage_to,
+        color_code if color_code else None,
+    )
+
+    if not cars:
+        # Отправляем сообщение, если автомобили не найдены
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            types.InlineKeyboardButton(
+                "➕ Добавить новый автомобиль в поиск", callback_data="search_car"
+            )
+        )
+        markup.add(
+            types.InlineKeyboardButton(
+                "🏠 Вернуться в главное меню", callback_data="start"
+            )
+        )
+
+        bot.send_message(
+            call.message.chat.id,
+            f"😔 К сожалению, по вашему запросу ничего не найдено.\n\n"
+            f"Марка: {maker_name}\n"
+            f"Модель: {class_name}\n"
+            f"Поколение: {car_name}\n"
+            f"Конфигурация: {model_name}\n"
+            f"Год: {year_from}-{year_to}\n"
+            f"Пробег: {mileage_from}-{mileage_to} км\n"
+            f"Цвет: {color_ru}",
+            reply_markup=markup,
+        )
+        return
+
+    # Отправляем только первый найденный автомобиль
+    car = cars[0]
+    caption = (
+        f"🚗 <b>{car['title']}</b>\n"
+        f"📆 Год: {car['year']}\n"
+        f"🏁 Пробег: {car['mileage']}\n"
+        f"📍 Регион: {car['region']}\n"
+        f"💰 Цена: {car['price']}만원\n\n"
+        f"🔗 <a href='{car['link']}'>Подробнее на KbChaChaCha</a>"
+    )
+
+    # Отправляем изображение если есть, или текст если изображения нет
+    if car["img_url"] and car["img_url"] != "":
+        try:
+            bot.send_photo(
+                call.message.chat.id, car["img_url"], caption=caption, parse_mode="HTML"
+            )
+        except Exception:
+            # Если не удалось отправить фото, отправляем только текст
+            bot.send_message(call.message.chat.id, caption, parse_mode="HTML")
+    else:
+        bot.send_message(call.message.chat.id, caption, parse_mode="HTML")
+
+    # Отправляем кнопки для дальнейших действий
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        types.InlineKeyboardButton(
+            "➕ Добавить новый автомобиль в поиск", callback_data="search_car"
+        )
+    )
+    markup.add(
+        types.InlineKeyboardButton("🏠 Вернуться в главное меню", callback_data="start")
+    )
+
+    bot.send_message(
+        call.message.chat.id,
+        f"✅ Показан результат поиска по запросу:\n\n"
+        f"Марка: {maker_name}\n"
+        f"Модель: {class_name}\n"
+        f"Поколение: {car_name}\n"
+        f"Конфигурация: {model_name}\n"
+        f"Год: {year_from}-{year_to}\n"
+        f"Пробег: {mileage_from}-{mileage_to} км\n"
+        f"Цвет: {color_ru}",
+        reply_markup=markup,
+    )
 
 
 # Запуск бота

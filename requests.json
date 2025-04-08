@@ -3,13 +3,13 @@
     {
       "manufacturer": "BMW",
       "model_group": "5시리즈",
-      "model": "5시리즈 (G60)",
-      "trim": "가솔린 4WD",
+      "model": "5시리즈 (G30)",
+      "trim": "가솔린 2WD",
       "year_from": 2023,
       "year_to": 2024,
       "mileage_from": 0,
       "mileage_to": 200000,
-      "color": "검정색"
+      "color": "흰색"
     }
   ]
 }
