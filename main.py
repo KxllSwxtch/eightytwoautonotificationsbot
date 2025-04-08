@@ -30,10 +30,46 @@ KBCHACHA_COLOR_TRANSLATIONS = {
     "파란색": {"ru": "Синий", "code": "006007"},
     "주황색": {"ru": "Оранжевый", "code": "006008"},
     "갈색": {"ru": "Коричневый", "code": "006009"},
-    "초록색": {"ru": "Зелёный", "code": "006010"},
+    "초록색": {"ru": "Зелёный", "code": "006010jn"},
     "노란색": {"ru": "Жёлтый", "code": "006011"},
     "보라색": {"ru": "Фиолетовый", "code": "006012"},
     "Любой": {"ru": "Любой", "code": ""},
+}
+
+# Словарь переводов цветов для KCar
+KCAR_COLOR_TRANSLATIONS = {
+    "흰색": "Белый",
+    "진주색": "Жемчужный",
+    "검정색": "Чёрный",
+    "검정투톤": "Чёрный (двухцветный)",
+    "쥐색": "Тёмно-серый",
+    "은색": "Серебристый",
+    "은회색": "Серо-серебристый",
+    "은색투톤": "Серебристый (двухцветный)",
+    "흰색투톤": "Белый (двухцветный)",
+    "진주투톤": "Жемчужный (двухцветный)",
+    "은하색": "Галактический серый",
+    "명은색": "Светло-серебристый",
+    "빨간색": "Красный",
+    "주황색": "Оранжевый",
+    "자주색": "Бордовый",
+    "보라색": "Фиолетовый",
+    "분홍색": "Розовый",
+    "노란색": "Жёлтый",
+    "갈대색": "Коричневато-серый",
+    "연금색": "Светло-золотистый",
+    "갈색": "Коричневый",
+    "갈색투톤": "Коричневый (двухцветный)",
+    "금색": "Золотистый",
+    "금색투톤": "Золотистый (двухцветный)",
+    "청색": "Синий",
+    "하늘색": "Голубой",
+    "담녹색": "Тёмно-зелёный",
+    "녹색": "Зелёный",
+    "연두색": "Салатовый",
+    "청옥색": "Бирюзовый",
+    "기타": "Другой",
+    "Любой": "Любой",
 }
 
 
@@ -459,8 +495,7 @@ def handle_platform_selection(call):
     elif platform == "kbchachacha":
         handle_kbchachacha_search(call)
     elif platform == "kcar":
-        # Будет реализовано позже
-        bot.answer_callback_query(call.id, "Функционал KCar будет добавлен позже")
+        handle_kcar_search(call)
 
 
 def handle_encar_search(call):
@@ -1813,6 +1848,533 @@ def handle_kbcha_color_selection(call):
         f"Пробег: {mileage_from}-{mileage_to} км\n"
         f"Цвет: {color_ru}",
         reply_markup=markup,
+    )
+
+
+# Функции для работы с KCar
+def get_kcar_manufacturers():
+    """Получение списка производителей с KCar"""
+    url = "https://api.kcar.com/bc/search/group/mnuftr"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "Content-Type": "application/json",
+    }
+    payload = {"wr_eq_sell_dcd": "ALL", "wr_in_multi_columns": "cntr_rgn_cd|cntr_cd"}
+
+    try:
+        response = requests.post(url, headers=headers, json=payload)
+        data = response.json()
+        manufacturers = data.get("data", [])
+
+        # Сортируем по имени производителя на английском
+        manufacturers.sort(key=lambda x: x.get("mnuftrEnm", ""))
+
+        return manufacturers
+    except Exception as e:
+        print("Ошибка при получении марок из KCar:", e)
+        return []
+
+
+def get_kcar_models(maker_code):
+    """Получение списка моделей для выбранной марки с KCar"""
+    url = "https://api.kcar.com/bc/search/group/modelGrp"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "wr_eq_sell_dcd": "ALL",
+        "wr_in_multi_columns": "cntr_rgn_cd|cntr_cd",
+        "wr_eq_mnuftr_cd": maker_code,
+    }
+
+    try:
+        response = requests.post(url, headers=headers, json=payload)
+        data = response.json()
+        models = data.get("data", [])
+
+        # Сортируем по имени модели
+        models.sort(key=lambda x: x.get("modelGrpNm", ""))
+
+        # Отфильтровываем модели с count > 0, так как они реально представлены в списке
+        models = [model for model in models if model.get("count", 0) > 0]
+
+        return models
+    except Exception as e:
+        print(f"Ошибка при получении моделей с KCar для {maker_code}:", e)
+        return []
+
+
+def get_kcar_generations(maker_code, model_code):
+    """Получение списка поколений для выбранной модели с KCar"""
+    url = "https://api.kcar.com/bc/search/group/model"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "wr_eq_sell_dcd": "ALL",
+        "wr_in_multi_columns": "cntr_rgn_cd|cntr_cd",
+        "wr_eq_mnuftr_cd": maker_code,
+        "wr_eq_model_grp_cd": model_code,
+    }
+
+    try:
+        response = requests.post(url, headers=headers, json=payload)
+        data = response.json()
+        generations = data.get("data", [])
+
+        # Сортируем поколения по количеству автомобилей в наличии (по убыванию)
+        generations.sort(key=lambda x: x.get("count", 0), reverse=True)
+
+        # Отфильтровываем поколения с count > 0
+        generations = [gen for gen in generations if gen.get("count", 0) > 0]
+
+        return generations
+    except Exception as e:
+        print(
+            f"Ошибка при получении поколений с KCar для {maker_code}/{model_code}:", e
+        )
+        return []
+
+
+def get_kcar_configurations(maker_code, model_group_code, model_code):
+    """Получение списка конфигураций для выбранного поколения с KCar"""
+    url = "https://api.kcar.com/bc/search/group/grd"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "wr_eq_sell_dcd": "ALL",
+        "wr_in_multi_columns": "cntr_rgn_cd|cntr_cd",
+        "wr_eq_mnuftr_cd": maker_code,
+        "wr_eq_model_grp_cd": model_group_code,
+        "wr_eq_model_cd": model_code,
+    }
+
+    try:
+        response = requests.post(url, headers=headers, json=payload)
+        data = response.json()
+        configurations = data.get("data", [])
+
+        # Сортируем конфигурации по количеству автомобилей в наличии (по убыванию)
+        configurations.sort(key=lambda x: x.get("count", 0), reverse=True)
+
+        # Отфильтровываем конфигурации с count > 0
+        configurations = [
+            config for config in configurations if config.get("count", 0) > 0
+        ]
+
+        return configurations
+    except Exception as e:
+        print(
+            f"Ошибка при получении конфигураций с KCar для {maker_code}/{model_group_code}/{model_code}:",
+            e,
+        )
+        return []
+
+
+def handle_kcar_search(call):
+    """Обработчик для поиска автомобилей на KCar"""
+    # Получаем список производителей
+    manufacturers = get_kcar_manufacturers()
+    if not manufacturers:
+        bot.answer_callback_query(call.id, "Не удалось загрузить марки с KCar.")
+        return
+
+    # Создаем клавиатуру с марками
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    for item in manufacturers:
+        maker_name = item.get("mnuftrEnm", "Без названия")
+        maker_code = item.get("mnuftrCd", "")
+        # Используем специальный префикс для отличия от других площадок
+        callback_data = f"kcar_brand_{maker_code}_{maker_name}"
+        markup.add(types.InlineKeyboardButton(maker_name, callback_data=callback_data))
+
+    bot.send_message(
+        call.message.chat.id, "Выберите марку автомобиля:", reply_markup=markup
+    )
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("kcar_brand_"))
+def handle_kcar_brand_selection(call):
+    """Обработчик выбора марки автомобиля на KCar"""
+    # Парсим данные из callback_data
+    parts = call.data.split("_", 3)
+    maker_code = parts[2]
+    maker_name = parts[3] if len(parts) > 3 else "Неизвестно"
+
+    # Сохраняем выбранную марку у пользователя для дальнейшего использования
+    user_id = call.from_user.id
+    if user_id not in user_search_data:
+        user_search_data[user_id] = {}
+
+    user_search_data[user_id]["kcar_maker_code"] = maker_code
+    user_search_data[user_id]["kcar_maker_name"] = maker_name
+
+    # Получаем список моделей для выбранной марки
+    models = get_kcar_models(maker_code)
+    if not models:
+        bot.send_message(
+            call.message.chat.id,
+            f"Не удалось загрузить модели для {maker_name} или для этой марки нет доступных моделей.",
+        )
+        return
+
+    # Создаем клавиатуру с моделями
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    for item in models:
+        model_name = item.get("modelGrpNm", "Без названия")
+        model_code = item.get("modelGrpCd", "")
+        callback_data = f"kcar_model_{model_code}_{model_name}"
+        markup.add(types.InlineKeyboardButton(model_name, callback_data=callback_data))
+
+    bot.send_message(
+        call.message.chat.id,
+        f"Марка: {maker_name}\nВыберите модель:",
+        reply_markup=markup,
+    )
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("kcar_model_"))
+def handle_kcar_model_selection(call):
+    """Обработчик выбора модели автомобиля на KCar"""
+    # Парсим данные из callback_data
+    parts = call.data.split("_", 3)
+    model_code = parts[2]
+    model_name = parts[3] if len(parts) > 3 else "Неизвестно"
+
+    # Сохраняем выбранную модель у пользователя для дальнейшего использования
+    user_id = call.from_user.id
+    if user_id not in user_search_data:
+        user_search_data[user_id] = {}
+
+    user_search_data[user_id]["kcar_model_code"] = model_code
+    user_search_data[user_id]["kcar_model_name"] = model_name
+
+    # Получаем информацию о марке
+    maker_name = user_search_data[user_id].get("kcar_maker_name", "")
+    maker_code = user_search_data[user_id].get("kcar_maker_code", "")
+
+    # Получаем список поколений для выбранной модели
+    generations = get_kcar_generations(maker_code, model_code)
+    if not generations:
+        bot.send_message(
+            call.message.chat.id,
+            f"Не удалось загрузить поколения для {model_name} или для этой модели нет доступных поколений.",
+        )
+        return
+
+    # Создаем клавиатуру с поколениями
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    for item in generations:
+        gen_name = item.get("modelNm", "Без названия")
+        gen_year = item.get("prdcnYear", "")
+        gen_code = item.get("modelCd", "")
+
+        # Формируем текст кнопки с названием и годами производства
+        display_text = f"{gen_name} {gen_year}"
+        callback_data = f"kcar_gen_{gen_code}_{gen_name}"
+
+        markup.add(
+            types.InlineKeyboardButton(display_text, callback_data=callback_data)
+        )
+
+    bot.send_message(
+        call.message.chat.id,
+        f"Марка: {maker_name}\nМодель: {model_name}\nВыберите поколение:",
+        reply_markup=markup,
+    )
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("kcar_gen_"))
+def handle_kcar_generation_selection(call):
+    """Обработчик выбора поколения автомобиля на KCar"""
+    # Парсим данные из callback_data
+    parts = call.data.split("_", 3)
+    gen_code = parts[2]
+    gen_name = parts[3] if len(parts) > 3 else "Неизвестно"
+
+    # Сохраняем выбранное поколение у пользователя для дальнейшего использования
+    user_id = call.from_user.id
+    if user_id not in user_search_data:
+        user_search_data[user_id] = {}
+
+    user_search_data[user_id]["kcar_gen_code"] = gen_code
+    user_search_data[user_id]["kcar_gen_name"] = gen_name
+
+    # Получаем информацию о предыдущих выборах
+    maker_name = user_search_data[user_id].get("kcar_maker_name", "")
+    maker_code = user_search_data[user_id].get("kcar_maker_code", "")
+    model_name = user_search_data[user_id].get("kcar_model_name", "")
+    model_code = user_search_data[user_id].get("kcar_model_code", "")
+
+    # Получаем список конфигураций для выбранного поколения
+    configurations = get_kcar_configurations(maker_code, model_code, gen_code)
+    if not configurations:
+        bot.send_message(
+            call.message.chat.id,
+            f"Не удалось загрузить конфигурации для {gen_name} или для этого поколения нет доступных конфигураций.",
+        )
+        return
+
+    # Создаем клавиатуру с конфигурациями
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    for item in configurations:
+        config_name = item.get("grdNm", "Без названия")
+        config_code = item.get("grdCd", "")
+        count = item.get("count", 0)
+
+        # Формируем текст кнопки с названием и количеством автомобилей
+        display_text = f"{config_name} ({count} шт.)"
+        callback_data = f"kcar_config_{config_code}_{config_name}"
+
+        markup.add(
+            types.InlineKeyboardButton(display_text, callback_data=callback_data)
+        )
+
+    bot.send_message(
+        call.message.chat.id,
+        f"Марка: {maker_name}\nМодель: {model_name}\nПоколение: {gen_name}\nВыберите конфигурацию:",
+        reply_markup=markup,
+    )
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("kcar_config_"))
+def handle_kcar_configuration_selection(call):
+    """Обработчик выбора конфигурации автомобиля на KCar"""
+    # Парсим данные из callback_data
+    parts = call.data.split("_", 3)
+    config_code = parts[2]
+    config_name = parts[3] if len(parts) > 3 else "Неизвестно"
+
+    # Сохраняем выбранную конфигурацию у пользователя для дальнейшего использования
+    user_id = call.from_user.id
+    if user_id not in user_search_data:
+        user_search_data[user_id] = {}
+
+    user_search_data[user_id]["kcar_config_code"] = config_code
+    user_search_data[user_id]["kcar_config_name"] = config_name
+
+    # Получаем информацию о предыдущих выборах
+    maker_name = user_search_data[user_id].get("kcar_maker_name", "")
+    model_name = user_search_data[user_id].get("kcar_model_name", "")
+    gen_name = user_search_data[user_id].get("kcar_gen_name", "")
+
+    # Показываем выбор года от
+    current_year = datetime.now().year
+    start_year = current_year - 10  # Начинаем с 10 лет назад
+
+    year_markup = types.InlineKeyboardMarkup(row_width=3)
+    for year in range(start_year, current_year + 1):
+        year_markup.add(
+            types.InlineKeyboardButton(
+                f"{year}", callback_data=f"kcar_year_from_{year}"
+            )
+        )
+
+    bot.send_message(
+        call.message.chat.id,
+        f"Марка: {maker_name}\nМодель: {model_name}\nПоколение: {gen_name}\nКонфигурация: {config_name}\n\nВыберите начальный год выпуска:",
+        reply_markup=year_markup,
+    )
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("kcar_year_from_"))
+def handle_kcar_year_from_selection(call):
+    """Обработчик выбора начального года для KCar"""
+    # Парсим выбранный год
+    year_from = call.data.split("_")[3]
+
+    # Сохраняем выбранный начальный год
+    user_id = call.from_user.id
+    if user_id not in user_search_data:
+        user_search_data[user_id] = {}
+
+    user_search_data[user_id]["kcar_year_from"] = year_from
+
+    # Показываем выбор конечного года
+    current_year = datetime.now().year
+    year_from_int = int(year_from)
+
+    year_markup = types.InlineKeyboardMarkup(row_width=3)
+    for year in range(year_from_int, current_year + 1):
+        year_markup.add(
+            types.InlineKeyboardButton(f"{year}", callback_data=f"kcar_year_to_{year}")
+        )
+
+    bot.send_message(
+        call.message.chat.id,
+        f"Выбран начальный год: {year_from}\nТеперь выберите конечный год выпуска:",
+        reply_markup=year_markup,
+    )
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("kcar_year_to_"))
+def handle_kcar_year_to_selection(call):
+    """Обработчик выбора конечного года для KCar"""
+    # Парсим выбранный год
+    year_to = call.data.split("_")[3]
+
+    # Сохраняем выбранный конечный год
+    user_id = call.from_user.id
+    if user_id not in user_search_data:
+        user_search_data[user_id] = {}
+
+    user_search_data[user_id]["kcar_year_to"] = year_to
+
+    # Показываем выбор минимального пробега
+    mileage_markup = types.InlineKeyboardMarkup(row_width=3)
+    for mileage in [0, 10000, 20000, 30000, 50000, 70000, 100000]:
+        mileage_markup.add(
+            types.InlineKeyboardButton(
+                f"{mileage} км", callback_data=f"kcar_mileage_from_{mileage}"
+            )
+        )
+
+    bot.send_message(
+        call.message.chat.id,
+        f"Выбран диапазон годов: {user_search_data[user_id]['kcar_year_from']}-{year_to}\nТеперь выберите минимальный пробег:",
+        reply_markup=mileage_markup,
+    )
+
+
+@bot.callback_query_handler(
+    func=lambda call: call.data.startswith("kcar_mileage_from_")
+)
+def handle_kcar_mileage_from_selection(call):
+    """Обработчик выбора минимального пробега для KCar"""
+    # Парсим выбранный пробег
+    mileage_from = call.data.split("_")[3]
+
+    # Сохраняем выбранный минимальный пробег
+    user_id = call.from_user.id
+    if user_id not in user_search_data:
+        user_search_data[user_id] = {}
+
+    user_search_data[user_id]["kcar_mileage_from"] = mileage_from
+
+    # Показываем выбор максимального пробега
+    mileage_markup = types.InlineKeyboardMarkup(row_width=3)
+    mileage_from_int = int(mileage_from)
+
+    for mileage in [50000, 100000, 150000, 200000, 250000, 300000]:
+        if mileage > mileage_from_int:
+            mileage_markup.add(
+                types.InlineKeyboardButton(
+                    f"{mileage} км", callback_data=f"kcar_mileage_to_{mileage}"
+                )
+            )
+
+    bot.send_message(
+        call.message.chat.id,
+        f"Выбран минимальный пробег: {mileage_from} км\nТеперь выберите максимальный пробег:",
+        reply_markup=mileage_markup,
+    )
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("kcar_mileage_to_"))
+def handle_kcar_mileage_to_selection(call):
+    """Обработчик выбора максимального пробега для KCar"""
+    # Парсим выбранный пробег
+    mileage_to = call.data.split("_")[3]
+
+    # Сохраняем выбранный максимальный пробег
+    user_id = call.from_user.id
+    if user_id not in user_search_data:
+        user_search_data[user_id] = {}
+
+    user_search_data[user_id]["kcar_mileage_to"] = mileage_to
+
+    # Показываем выбор цвета
+    markup = types.InlineKeyboardMarkup(row_width=2)
+
+    # Добавляем вариант "Любой"
+    markup.add(types.InlineKeyboardButton("Любой", callback_data="kcar_color_Любой"))
+
+    # Добавляем доступные цвета
+    for kr_name, ru_name in KCAR_COLOR_TRANSLATIONS.items():
+        if kr_name != "Любой":  # Исключаем "Любой", так как мы его уже добавили выше
+            markup.add(
+                types.InlineKeyboardButton(
+                    ru_name, callback_data=f"kcar_color_{kr_name}"
+                )
+            )
+
+    bot.send_message(
+        call.message.chat.id,
+        f"Выбран диапазон пробега: {user_search_data[user_id]['kcar_mileage_from']}-{mileage_to} км\nТеперь выберите цвет автомобиля:",
+        reply_markup=markup,
+    )
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("kcar_color_"))
+def handle_kcar_color_selection(call):
+    """Обработчик выбора цвета для KCar"""
+    # Парсим выбранный цвет
+    color_kr = call.data.split("_")[2]
+
+    # Сохраняем выбранный цвет
+    user_id = call.from_user.id
+    if user_id not in user_search_data:
+        user_search_data[user_id] = {}
+
+    color_ru = KCAR_COLOR_TRANSLATIONS.get(color_kr, "Неизвестно")
+
+    user_search_data[user_id]["kcar_color_kr"] = color_kr
+    user_search_data[user_id]["kcar_color_ru"] = color_ru
+
+    # Получаем все сохраненные данные о выборе пользователя
+    maker_name = user_search_data[user_id].get("kcar_maker_name", "")
+    maker_code = user_search_data[user_id].get("kcar_maker_code", "")
+    model_name = user_search_data[user_id].get("kcar_model_name", "")
+    model_code = user_search_data[user_id].get("kcar_model_code", "")
+    gen_name = user_search_data[user_id].get("kcar_gen_name", "")
+    gen_code = user_search_data[user_id].get("kcar_gen_code", "")
+    config_name = user_search_data[user_id].get("kcar_config_name", "")
+    config_code = user_search_data[user_id].get("kcar_config_code", "")
+    year_from = user_search_data[user_id].get("kcar_year_from", "")
+    year_to = user_search_data[user_id].get("kcar_year_to", "")
+    mileage_from = user_search_data[user_id].get("kcar_mileage_from", "")
+    mileage_to = user_search_data[user_id].get("kcar_mileage_to", "")
+
+    # Отправляем сообщение о завершении выбора параметров
+    summary = (
+        f"✅ Поиск на KCar с параметрами:\n\n"
+        f"Марка: {maker_name}\n"
+        f"Модель: {model_name}\n"
+        f"Поколение: {gen_name}\n"
+        f"Конфигурация: {config_name}\n"
+        f"Год: {year_from}-{year_to}\n"
+        f"Пробег: {mileage_from}-{mileage_to} км\n"
+        f"Цвет: {color_ru}\n\n"
+    )
+
+    # В связи с тем, что payload шифруется, добавляем временное сообщение для пользователя
+    summary += (
+        "К сожалению, из-за особенностей API KCar (шифрование запросов), "
+        "прямой поиск по этим параметрам в боте в настоящий момент недоступен.\n\n"
+        "Вы можете воспользоваться следующей ссылкой для поиска на сайте KCar:\n"
+        "https://www.kcar.com/bc/search"
+    )
+
+    # Кнопки для дальнейших действий
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        types.InlineKeyboardButton(
+            "➕ Добавить новый автомобиль в поиск", callback_data="search_car"
+        )
+    )
+    markup.add(
+        types.InlineKeyboardButton("🏠 Вернуться в главное меню", callback_data="start")
+    )
+
+    bot.send_message(
+        call.message.chat.id,
+        summary,
+        reply_markup=markup,
+        parse_mode="HTML",
     )
 
 
