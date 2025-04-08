@@ -1,16 +1,15 @@
 {
   "728438182": [
     {
-      "manufacturer": " (BMW)",
-      "model_group": " (X5M)",
-      "model": " ()",
-      "generation": "X5M (F95) (X5M (F95))",
-      "trim": " ()",
-      "year": 2024,
+      "manufacturer": "BMW",
+      "model_group": "5시리즈",
+      "model": "5시리즈 (G60)",
+      "trim": "가솔린 4WD",
+      "year_from": 2023,
+      "year_to": 2024,
       "mileage_from": 0,
       "mileage_to": 200000,
-      "color": "Белый",
-      "source": "kcar"
+      "color": "검정색"
     }
   ]
 }
