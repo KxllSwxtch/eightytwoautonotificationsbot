@@ -566,6 +566,13 @@ def handle_model_selection(call):
         bot.answer_callback_query(call.id, "Не удалось загрузить поколения.")
         return
 
+    # Отладочный вывод данных о поколениях
+    print(f"⚙️ DEBUG [handle_model_selection] - Полученные поколения:")
+    for idx, item in enumerate(generations[:3]):  # Ограничимся первыми 3 для краткости
+        gen_kr = item.get("DisplayValue", "Без названия")
+        gen_eng = item.get("Metadata", {}).get("EngName", [""])[0]
+        print(f"  Поколение {idx+1}: gen_kr='{gen_kr}', gen_eng='{gen_eng}'")
+
     markup = types.InlineKeyboardMarkup(row_width=2)
     for item in generations:
         gen_kr = item.get("DisplayValue", "Без названия")
@@ -587,7 +594,14 @@ def handle_model_selection(call):
         callback_data = f"generation_{gen_eng}_{gen_kr}"
         translated_gen_kr = translate_phrase(gen_kr)
         translated_gen_eng = translate_phrase(gen_eng)
-        display_text = f"{translated_gen_kr} {translated_gen_eng} {period}".strip()
+
+        # Отладочная информация о переводе
+        print(
+            f"⚙️ DEBUG [handle_model_selection] - Перевод: '{gen_kr}' -> '{translated_gen_kr}'"
+        )
+
+        # Используем английское название с периодом, без корейского текста
+        display_text = f"{gen_eng} {translated_gen_kr} {period}".strip()
         markup.add(
             types.InlineKeyboardButton(display_text, callback_data=callback_data)
         )
@@ -681,7 +695,11 @@ def handle_generation_selection(call):
         trim_kr = item.get("DisplayValue", "")
         trim_eng = item.get("Metadata", {}).get("EngName", [""])[0]
         callback_data = f"trim_{trim_eng}_{trim_kr}"
-        display_text = trim_kr
+
+        # Используем translate_phrase для перевода названия комплектации
+        translated_trim_kr = translate_phrase(trim_kr)
+        display_text = translated_trim_kr
+
         markup.add(
             types.InlineKeyboardButton(display_text, callback_data=callback_data)
         )
@@ -701,8 +719,13 @@ def handle_generation_selection(call):
         }
     )
 
+    # Используем translate_phrase для перевода названий поколений
+    translated_generation_eng = translate_phrase(generation_eng)
+    translated_generation_kr = translate_phrase(generation_kr)
+
+    # Отображаем переведенные названия поколений в тексте сообщения
     bot.edit_message_text(
-        f"Марка: {brand_eng.strip()} ({brand_kr})\nМодель: {model_eng} ({model_kr})\nПоколение: {generation_eng} ({generation_kr})\nВыберите комплектацию:",
+        f"Марка: {brand_eng.strip()} ({brand_kr})\nМодель: {model_eng} ({model_kr})\nПоколение: {translated_generation_eng} ({translated_generation_kr})\nВыберите комплектацию:",
         chat_id=call.message.chat.id,
         message_id=call.message.message_id,
         reply_markup=markup,
@@ -778,8 +801,12 @@ def handle_trim_selection(call):
         generation_eng = generation_part
         generation_kr = ""
 
+    # Используем translate_phrase для перевода названий комплектаций
+    translated_trim_eng = translate_phrase(trim_eng)
+    translated_trim_kr = translate_phrase(trim_kr)
+
     bot.edit_message_text(
-        f"Марка: {brand_eng.strip()} ({brand_kr})\nМодель: {model_eng} ({model_kr})\nПоколение: {generation_eng} ({generation_kr})\nКомплектация: {trim_eng} ({trim_kr})\nВыберите начальный год выпуска:",
+        f"Марка: {brand_eng.strip()} ({brand_kr})\nМодель: {model_eng} ({model_kr})\nПоколение: {generation_eng} ({generation_kr})\nКомплектация: {translated_trim_eng} ({translated_trim_kr})\nВыберите начальный год выпуска:",
         chat_id=call.message.chat.id,
         message_id=call.message.message_id,
         reply_markup=year_markup,
@@ -1319,12 +1346,23 @@ def handle_kbchachacha_search(call):
     for item in manufacturers:
         maker_name = item.get("makerName", "Без названия")
         maker_code = item.get("makerCode", "")
+
+        # Добавляем перевод названия марки, если оно есть в словаре переводов
+        translated_name = translations.get(maker_name, maker_name)
+
+        # Используем только английский перевод для отображения
+        display_name = translated_name
+
         # Используем специальный префикс для отличия от других площадок
         callback_data = f"kbcha_brand_{maker_code}_{maker_name}"
-        markup.add(types.InlineKeyboardButton(maker_name, callback_data=callback_data))
+        markup.add(
+            types.InlineKeyboardButton(display_name, callback_data=callback_data)
+        )
 
     bot.send_message(
-        call.message.chat.id, "Выберите марку автомобиля:", reply_markup=markup
+        call.message.chat.id,
+        "Выберите марку автомобиля:",
+        reply_markup=markup,
     )
 
 
@@ -1343,6 +1381,9 @@ def handle_kbcha_brand_selection(call):
     user_search_data[user_id]["kbcha_maker_code"] = maker_code
     user_search_data[user_id]["kbcha_maker_name"] = maker_name
 
+    # Получаем перевод названия марки, если оно есть
+    translated_maker_name = translations.get(maker_name, maker_name)
+
     # Получаем список моделей для выбранной марки
     models = get_kbchachacha_models(maker_code)
     if not models:
@@ -1356,12 +1397,24 @@ def handle_kbcha_brand_selection(call):
     for item in models:
         class_name = item.get("className", "Без названия")
         class_code = item.get("classCode", "")
+
+        # Добавляем перевод названия модели, если оно есть в словаре переводов
+        translated_name = translations.get(class_name, class_name)
+
+        # Используем только переведенное название для отображения
+        display_name = translated_name
+
         callback_data = f"kbcha_model_{class_code}_{class_name}"
-        markup.add(types.InlineKeyboardButton(class_name, callback_data=callback_data))
+        markup.add(
+            types.InlineKeyboardButton(display_name, callback_data=callback_data)
+        )
+
+    # Отображаем только переведенное название марки
+    display_maker_name = translated_maker_name
 
     bot.send_message(
         call.message.chat.id,
-        f"Марка: {maker_name}\nВыберите модель:",
+        f"Марка: {display_maker_name}\nВыберите модель:",
         reply_markup=markup,
     )
 
@@ -1381,9 +1434,13 @@ def handle_kbcha_model_selection(call):
     user_search_data[user_id]["kbcha_class_code"] = class_code
     user_search_data[user_id]["kbcha_class_name"] = class_name
 
+    # Получаем перевод названия модели, если оно есть
+    translated_class_name = translations.get(class_name, class_name)
+
     # Получаем информацию о марке
     maker_name = user_search_data[user_id].get("kbcha_maker_name", "")
     maker_code = user_search_data[user_id].get("kbcha_maker_code", "")
+    translated_maker_name = translations.get(maker_name, maker_name)
 
     # Получаем список поколений для выбранной модели
     generations = get_kbchachacha_generations(maker_code, class_code)
@@ -1406,59 +1463,36 @@ def handle_kbcha_model_selection(call):
         if to_year == "현재":  # 현재 = "настоящее время" по-корейски
             year_period = f"({from_year}-н.в.)"
 
-        display_text = f"{car_name} {year_period}"
+        # Используем translate_phrase для перевода названия поколения, которая разбивает текст на слова
+        # и переводит каждое слово отдельно, что позволяет корректно переводить такие фразы как "가솔린 1.0 터보"
+        translated_name = translate_phrase(car_name)
+
+        # Используем формат: "Оригинальное название (Перевод) Период" или "Оригинальное название Период"
+        if car_name != translated_name:
+            display_text = f"{car_name} ({translated_name}) {year_period}"
+        else:
+            display_text = f"{car_name} {year_period}"
+
         callback_data = f"kbcha_gen_{car_code}_{car_name}"
         markup.add(
             types.InlineKeyboardButton(display_text, callback_data=callback_data)
         )
 
-    bot.send_message(
-        call.message.chat.id,
-        f"Марка: {maker_name}\nМодель: {class_name}\nВыберите поколение:",
-        reply_markup=markup,
+    # Форматируем отображаемые названия марки и модели с переводами, если они доступны
+    display_maker_name = (
+        f"{maker_name} ({translated_maker_name})"
+        if maker_name != translated_maker_name
+        else maker_name
+    )
+    display_class_name = (
+        f"{class_name} ({translated_class_name})"
+        if class_name != translated_class_name
+        else class_name
     )
 
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("kbcha_gen_"))
-def handle_kbcha_generation_selection(call):
-    # Парсим данные из callback_data
-    parts = call.data.split("_", 3)
-    car_code = parts[2]
-    car_name = parts[3] if len(parts) > 3 else "Неизвестно"
-
-    # Сохраняем выбранное поколение у пользователя для дальнейшего использования
-    user_id = call.from_user.id
-    if user_id not in user_search_data:
-        user_search_data[user_id] = {}
-
-    user_search_data[user_id]["kbcha_car_code"] = car_code
-    user_search_data[user_id]["kbcha_car_name"] = car_name
-
-    # Получаем информацию о марке и модели
-    maker_name = user_search_data[user_id].get("kbcha_maker_name", "")
-    maker_code = user_search_data[user_id].get("kbcha_maker_code", "")
-    class_name = user_search_data[user_id].get("kbcha_class_name", "")
-    class_code = user_search_data[user_id].get("kbcha_class_code", "")
-
-    # Получаем список конфигураций для выбранного поколения
-    trims = get_kbchachacha_trims(maker_code, class_code, car_code)
-    if not trims:
-        bot.send_message(
-            call.message.chat.id, f"Не удалось загрузить конфигурации для {car_name}"
-        )
-        return
-
-    # Создаем клавиатуру с конфигурациями
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    for item in trims:
-        model_name = item.get("modelName", "Без названия")
-        model_code = item.get("modelCode", "")
-        callback_data = f"kbcha_trim_{model_code}_{model_name}"
-        markup.add(types.InlineKeyboardButton(model_name, callback_data=callback_data))
-
     bot.send_message(
         call.message.chat.id,
-        f"Марка: {maker_name}\nМодель: {class_name}\nПоколение: {car_name}\nВыберите конфигурацию:",
+        f"Марка: {display_maker_name}\nМодель: {display_class_name}\nВыберите поколение:",
         reply_markup=markup,
     )
 
@@ -1555,6 +1589,89 @@ def search_kbchachacha_cars(
         return []
 
 
+@bot.callback_query_handler(func=lambda call: call.data.startswith("kbcha_gen_"))
+def handle_kbcha_generation_selection(call):
+    # Парсим данные из callback_data
+    parts = call.data.split("_", 3)
+    car_code = parts[2]
+    car_name = parts[3] if len(parts) > 3 else "Неизвестно"
+
+    # Сохраняем выбранное поколение у пользователя для дальнейшего использования
+    user_id = call.from_user.id
+    if user_id not in user_search_data:
+        user_search_data[user_id] = {}
+
+    user_search_data[user_id]["kbcha_car_code"] = car_code
+    user_search_data[user_id]["kbcha_car_name"] = car_name
+
+    # Получаем перевод названия поколения используя функцию translate_phrase
+    # которая разбивает текст на слова и переводит каждое слово отдельно
+    translated_car_name = translate_phrase(car_name)
+
+    # Получаем информацию о марке и модели
+    maker_name = user_search_data[user_id].get("kbcha_maker_name", "")
+    maker_code = user_search_data[user_id].get("kbcha_maker_code", "")
+    class_name = user_search_data[user_id].get("kbcha_class_name", "")
+    class_code = user_search_data[user_id].get("kbcha_class_code", "")
+
+    # Получаем переводы названий марки и модели, если они есть
+    translated_maker_name = translations.get(maker_name, maker_name)
+    translated_class_name = translations.get(class_name, class_name)
+
+    # Получаем список конфигураций для выбранного поколения
+    trims = get_kbchachacha_trims(maker_code, class_code, car_code)
+    if not trims:
+        bot.send_message(
+            call.message.chat.id, f"Не удалось загрузить конфигурации для {car_name}"
+        )
+        return
+
+    # Создаем клавиатуру с конфигурациями
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    for item in trims:
+        model_name = item.get("modelName", "Без названия")
+        model_code = item.get("modelCode", "")
+
+        # Добавляем перевод названия конфигурации используя translate_phrase
+        # которая разбивает текст на слова и переводит каждое слово отдельно
+        translated_name = translate_phrase(model_name)
+
+        # Используем формат: "Оригинальное название (Перевод)" или просто "Оригинальное название", если перевода нет
+        display_name = (
+            f"{model_name} ({translated_name})"
+            if model_name != translated_name
+            else model_name
+        )
+
+        callback_data = f"kbcha_trim_{model_code}_{model_name}"
+        markup.add(
+            types.InlineKeyboardButton(display_name, callback_data=callback_data)
+        )
+
+    # Форматируем отображаемые названия с переводами, если они доступны
+    display_maker_name = (
+        f"{maker_name} ({translated_maker_name})"
+        if maker_name != translated_maker_name
+        else maker_name
+    )
+    display_class_name = (
+        f"{class_name} ({translated_class_name})"
+        if class_name != translated_class_name
+        else class_name
+    )
+    display_car_name = (
+        f"{car_name} ({translated_car_name})"
+        if car_name != translated_car_name
+        else car_name
+    )
+
+    bot.send_message(
+        call.message.chat.id,
+        f"Марка: {display_maker_name}\nМодель: {display_class_name}\nПоколение: {display_car_name}\nВыберите конфигурацию:",
+        reply_markup=markup,
+    )
+
+
 @bot.callback_query_handler(func=lambda call: call.data.startswith("kbcha_trim_"))
 def handle_kbcha_trim_selection(call):
     # Парсим данные из callback_data
@@ -1570,6 +1687,9 @@ def handle_kbcha_trim_selection(call):
     user_search_data[user_id]["kbcha_model_code"] = model_code
     user_search_data[user_id]["kbcha_model_name"] = model_name
 
+    # Получаем перевод названия конфигурации, используя translate_phrase
+    translated_model_name = translate_phrase(model_name)
+
     # Получаем информацию о предыдущих выборах пользователя
     maker_name = user_search_data[user_id].get("kbcha_maker_name", "")
     maker_code = user_search_data[user_id].get("kbcha_maker_code", "")
@@ -1577,6 +1697,11 @@ def handle_kbcha_trim_selection(call):
     class_code = user_search_data[user_id].get("kbcha_class_code", "")
     car_name = user_search_data[user_id].get("kbcha_car_name", "")
     car_code = user_search_data[user_id].get("kbcha_car_code", "")
+
+    # Получаем переводы названий, если они есть
+    translated_maker_name = translations.get(maker_name, maker_name)
+    translated_class_name = translations.get(class_name, class_name)
+    translated_car_name = translate_phrase(car_name)
 
     # Показываем выбор года от
     current_year = datetime.now().year
@@ -1590,9 +1715,31 @@ def handle_kbcha_trim_selection(call):
             )
         )
 
+    # Форматируем отображаемые названия с переводами, если они доступны
+    display_maker_name = (
+        f"{maker_name} ({translated_maker_name})"
+        if maker_name != translated_maker_name
+        else maker_name
+    )
+    display_class_name = (
+        f"{class_name} ({translated_class_name})"
+        if class_name != translated_class_name
+        else class_name
+    )
+    display_car_name = (
+        f"{car_name} ({translated_car_name})"
+        if car_name != translated_car_name
+        else car_name
+    )
+    display_model_name = (
+        f"{model_name} ({translated_model_name})"
+        if model_name != translated_model_name
+        else model_name
+    )
+
     bot.send_message(
         call.message.chat.id,
-        f"Марка: {maker_name}\nМодель: {class_name}\nПоколение: {car_name}\nКонфигурация: {model_name}\n\nВыберите начальный год выпуска:",
+        f"Марка: {display_maker_name}\nМодель: {display_class_name}\nПоколение: {display_car_name}\nКонфигурация: {display_model_name}\n\nВыберите начальный год выпуска:",
         reply_markup=markup,
     )
 
