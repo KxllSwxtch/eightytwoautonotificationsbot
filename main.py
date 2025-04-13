@@ -2496,15 +2496,100 @@ def handle_kcar_color_selection(call):
         f"Год: {year_from}-{year_to}\n"
         f"Пробег: {mileage_from}-{mileage_to} км\n"
         f"Цвет: {color_ru}\n\n"
+        f"Пожалуйста, подождите, идет поиск автомобилей..."
     )
 
-    # В связи с тем, что payload шифруется, добавляем временное сообщение для пользователя
-    summary += (
-        "К сожалению, из-за особенностей API KCar (шифрование запросов), "
-        "прямой поиск по этим параметрам в боте в настоящий момент недоступен.\n\n"
-        "Вы можете воспользоваться следующей ссылкой для поиска на сайте KCar:\n"
-        "https://www.kcar.com/bc/search"
+    message = bot.send_message(
+        call.message.chat.id,
+        summary,
+        parse_mode="HTML",
     )
+
+    # Ищем автомобили с помощью функции парсинга HTML
+    cars = search_kcar_cars_by_html(
+        maker_code,
+        model_code,
+        gen_code,
+        year_from=year_from,
+        year_to=year_to,
+        mileage_from=mileage_from,
+        mileage_to=mileage_to,
+        color=color_kr,  # Передаем корейское название цвета
+    )
+
+    if not cars:
+        # Если автомобили не найдены
+        bot.edit_message_text(
+            f"{summary}\n\n❌ К сожалению, автомобили с указанными параметрами не найдены.\n\n"
+            f"Вы можете посмотреть автомобили на сайте KCar по ссылке:\n"
+            f"https://www.kcar.com/bc/search",
+            chat_id=call.message.chat.id,
+            message_id=message.message_id,
+            parse_mode="HTML",
+        )
+    else:
+        # Формируем сообщение с результатами поиска
+        bot.edit_message_text(
+            f"{summary}\n\n✅ Найдено автомобилей: {len(cars)}",
+            chat_id=call.message.chat.id,
+            message_id=message.message_id,
+            parse_mode="HTML",
+        )
+
+        # Отправляем информацию о каждом автомобиле
+        for car in cars:
+            car_message = (
+                f"🚗 <b>{car['title']}</b>\n\n"
+                f"💰 <b>Цена:</b> {car['price']}\n"
+                f"📅 <b>Год:</b> {car['year']}\n"
+                f"🛣 <b>Пробег:</b> {car['mileage']}\n"
+                f"⛽️ <b>Топливо:</b> {car['fuel_type']}\n"
+                f"📍 <b>Местоположение:</b> {car['location']}\n"
+            )
+
+            if car["description"]:
+                car_message += f"\n📝 <b>Описание:</b> {car['description']}\n"
+
+            if car["labels"]:
+                labels_text = ", ".join(car["labels"])
+                car_message += f"\n🏷 <b>Особенности:</b> {labels_text}\n"
+
+            # Добавляем ссылку на страницу автомобиля
+            car_message += f"\n🔎 <a href='{car['link']}'>Подробнее на сайте KCar</a>"
+
+            # Создаем клавиатуру с кнопкой для перехода к автомобилю
+            markup = types.InlineKeyboardMarkup()
+            markup.add(
+                types.InlineKeyboardButton("Открыть на сайте KCar", url=car["link"])
+            )
+
+            # Если есть изображение, отправляем фото с описанием
+            if car["img_url"]:
+                try:
+                    bot.send_photo(
+                        call.message.chat.id,
+                        car["img_url"],
+                        caption=car_message,
+                        reply_markup=markup,
+                        parse_mode="HTML",
+                    )
+                except Exception as e:
+                    print(f"Ошибка при отправке фото: {e}")
+                    # Если не удалось отправить фото, отправляем только текст
+                    bot.send_message(
+                        call.message.chat.id,
+                        car_message,
+                        reply_markup=markup,
+                        parse_mode="HTML",
+                    )
+            else:
+                # Если нет изображения, отправляем только текст
+                bot.send_message(
+                    call.message.chat.id,
+                    car_message,
+                    reply_markup=markup,
+                    parse_mode="HTML",
+                )
 
     # Кнопки для дальнейших действий
     markup = types.InlineKeyboardMarkup(row_width=1)
@@ -2519,10 +2604,167 @@ def handle_kcar_color_selection(call):
 
     bot.send_message(
         call.message.chat.id,
-        summary,
+        "Что вы хотите сделать дальше?",
         reply_markup=markup,
         parse_mode="HTML",
     )
+
+
+def search_kcar_cars_by_html(
+    mnuftr_cd,
+    model_grp_cd,
+    model_cd,
+    year_from=None,
+    year_to=None,
+    mileage_from=None,
+    mileage_to=None,
+    color=None,
+):
+    """
+    Поиск автомобилей на KCar через парсинг HTML страницы
+
+    Параметры:
+    mnuftr_cd (str): Код производителя
+    model_grp_cd (str): Код группы моделей
+    model_cd (str): Код модели
+    year_from (str, optional): Начальный год выпуска
+    year_to (str, optional): Конечный год выпуска
+    mileage_from (str, optional): Минимальный пробег
+    mileage_to (str, optional): Максимальный пробег
+    color (str, optional): Корейское название цвета
+
+    Возвращает:
+    list: Список автомобилей с информацией
+    """
+    # Базовый поисковый запрос
+    base_search_cond = {
+        "wr_eq_mnuftr_cd": mnuftr_cd,
+        "wr_eq_model_grp_cd": model_grp_cd,
+        "wr_eq_model_cd": model_cd,
+    }
+
+    # Добавляем дополнительные параметры, если они указаны
+    if year_from and year_to:
+        base_search_cond["wr_bt_prdcn_year"] = f"{year_from},{year_to}"
+
+    if mileage_from is not None and mileage_to is not None:
+        base_search_cond["wr_bt_accent_km"] = f"{mileage_from},{mileage_to}"
+
+    # Добавляем параметр цвета, если выбран конкретный цвет (не "Любой")
+    if color and color != "Любой":
+        # Находим корейское название цвета среди ключей словаря
+        for kr_color, ru_color in KCAR_COLOR_TRANSLATIONS.items():
+            if kr_color == color:
+                # Здесь предполагается, что код цвета может потребоваться позже
+                # Сейчас используем просто корейское название
+                base_search_cond["wr_eq_extl_color_nm"] = kr_color
+                break
+
+    # Преобразуем словарь в JSON строку и кодируем для URL
+    search_cond = urllib.parse.quote(json.dumps(base_search_cond))
+
+    # Формируем URL для запроса
+    url = f"https://www.kcar.com/bc/search?searchCond={search_cond}"
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
+
+    try:
+        print(f"DEBUG: Отправка запроса на URL: {url}")
+        response = requests.get(url, headers=headers)
+
+        if response.status_code != 200:
+            print(f"Ошибка при получении страницы: {response.status_code}")
+            return []
+
+        soup = BeautifulSoup(response.text, "html.parser")
+
+        # Ищем блок с автомобилями
+        car_list_wrap = soup.select_one("div.carListWrap")
+        if not car_list_wrap:
+            print("Не найден блок с автомобилями (div.carListWrap)")
+            return []
+
+        # Извлекаем все блоки с автомобилями
+        car_list_boxes = car_list_wrap.select("div.carListBox")
+        if not car_list_boxes:
+            print("Не найдены блоки с автомобилями (div.carListBox)")
+            return []
+
+        results = []
+        for box in car_list_boxes[:5]:  # Ограничиваем до 5 результатов
+            try:
+                # Извлекаем данные об автомобиле
+                detail_info = box.select_one("div.detailInfo")
+                if not detail_info:
+                    continue
+
+                # Название автомобиля
+                car_name_elem = box.select_one("div.carName p.carTit a")
+                car_name = car_name_elem.text.strip() if car_name_elem else "Неизвестно"
+
+                # Получаем ссылку на автомобиль
+                car_link = car_name_elem.get("href", "") if car_name_elem else ""
+                if car_link:
+                    car_link = f"https://www.kcar.com{car_link}"
+
+                # Цена
+                car_exp_elem = box.select_one("div.carExpIn p.carExp")
+                car_price = car_exp_elem.text.strip() if car_exp_elem else "Неизвестно"
+
+                # Детали автомобиля (год, пробег, тип топлива)
+                car_details_elem = box.select_one("p.detailCarCon")
+                car_details = []
+                if car_details_elem:
+                    for span in car_details_elem.select("span"):
+                        car_details.append(span.text.strip())
+
+                year = car_details[0] if len(car_details) > 0 else "Неизвестно"
+                mileage = car_details[1] if len(car_details) > 1 else "Неизвестно"
+                fuel_type = car_details[2] if len(car_details) > 2 else "Неизвестно"
+                location = car_details[3] if len(car_details) > 3 else "Неизвестно"
+
+                # Изображение автомобиля
+                img_elem = box.select_one("div.carListImg a img")
+                img_url = img_elem.get("src", "") if img_elem else ""
+
+                # Краткое описание автомобиля
+                car_desc_elem = box.select_one("div.carSimcDesc")
+                car_desc = car_desc_elem.text.strip() if car_desc_elem else ""
+
+                # Получаем дополнительные метки (VIP, 360 и т.д.)
+                car_labels = []
+                free_delivery = box.select_one("span.stateDlvy")
+                if free_delivery:
+                    car_labels.append("Бесплатная доставка")
+
+                car_360 = box.select_one("span.car360Img")
+                if car_360:
+                    car_labels.append("360° обзор")
+
+                results.append(
+                    {
+                        "title": car_name,
+                        "price": car_price,
+                        "year": year,
+                        "mileage": mileage,
+                        "fuel_type": fuel_type,
+                        "location": location,
+                        "description": car_desc,
+                        "link": car_link,
+                        "img_url": img_url,
+                        "labels": car_labels,
+                    }
+                )
+            except Exception as e:
+                print(f"Ошибка при парсинге автомобиля: {e}")
+                continue
+
+        return results
+    except Exception as e:
+        print(f"Ошибка при поиске автомобилей на KCar через HTML: {e}")
+        return []
 
 
 # Запуск бота
