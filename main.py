@@ -1686,6 +1686,10 @@ def handle_kbcha_trim_selection(call):
     model_code = parts[2]
     model_name = parts[3] if len(parts) > 3 else "Неизвестно"
 
+    print(f"✅ DEBUG kbcha_trim_selection - raw data:")
+    print(f"model_code: {model_code}")
+    print(f"model_name: {model_name}")
+
     # Сохраняем выбранную конфигурацию у пользователя для дальнейшего использования
     user_id = call.from_user.id
     if user_id not in user_search_data:
@@ -1711,44 +1715,78 @@ def handle_kbcha_trim_selection(call):
     translated_car_name = translate_phrase(car_name)
 
     # Определяем начальный год для поколения
-    # Можно попытаться извлечь год из названия поколения или установить его на основе известных данных
-    # Например, для 4-го поколения Sorento (03.2020 — 07.2023) мы можем извлечь 2020 из "03.2020"
+    # Отладочная информация о названии поколения и извлечении года
+    print(f"⚙️ DEBUG kbcha_trim_selection - car_name: '{car_name}'")
+
+    # По умолчанию используем значения
     start_year = datetime.now().year - 5  # По умолчанию 5 лет назад
     end_year = datetime.now().year  # По умолчанию текущий год
 
     # Пытаемся найти информацию о периоде выпуска поколения в его названии
     if "(" in car_name and ")" in car_name:
         period_part = car_name.split("(")[1].split(")")[0].strip()
-        if "—" in period_part or "-" in period_part:
-            parts = period_part.replace("—", "-").split("-")
-            if len(parts) == 2:
-                start_date = parts[0].strip()
-                end_date = parts[1].strip()
+        print(f"⚙️ DEBUG kbcha_trim_selection - period_part: '{period_part}'")
 
-                # Извлекаем год из начальной даты (формат может быть "03.2020" или "2020")
-                if "." in start_date:
-                    start_year_str = start_date.split(".")[-1]
-                    if start_year_str.isdigit() and len(start_year_str) == 4:
-                        start_year = int(start_year_str)
-                elif start_date.isdigit() and len(start_date) == 4:
-                    start_year = int(start_date)
+        # Проверяем разные форматы разделителей
+        if "—" in period_part:
+            parts = period_part.split("—")
+        elif "-" in period_part:
+            parts = period_part.split("-")
+        else:
+            parts = []
 
-                # Извлекаем год из конечной даты
-                if "." in end_date:
-                    end_year_str = end_date.split(".")[-1]
-                    if end_year_str.isdigit() and len(end_year_str) == 4:
-                        end_year = int(end_year_str)
-                elif end_date.isdigit() and len(end_date) == 4:
-                    end_year = int(end_date)
+        print(f"⚙️ DEBUG kbcha_trim_selection - split parts: {parts}")
+
+        if len(parts) == 2:
+            start_date = parts[0].strip()
+            end_date = parts[1].strip()
+            print(
+                f"⚙️ DEBUG kbcha_trim_selection - start_date: '{start_date}', end_date: '{end_date}'"
+            )
+
+            # Извлекаем год из начальной даты (формат может быть "03.2020" или "2020")
+            if "." in start_date:
+                start_year_str = start_date.split(".")[-1]
+                print(
+                    f"⚙️ DEBUG kbcha_trim_selection - parsed start_year_str: '{start_year_str}'"
+                )
+                if start_year_str.isdigit() and len(start_year_str) == 4:
+                    start_year = int(start_year_str)
+            elif start_date.isdigit() and len(start_date) == 4:
+                start_year = int(start_date)
+
+            # Извлекаем год из конечной даты
+            if "." in end_date:
+                end_year_str = end_date.split(".")[-1]
+                print(
+                    f"⚙️ DEBUG kbcha_trim_selection - parsed end_year_str: '{end_year_str}'"
+                )
+                if end_year_str.isdigit() and len(end_year_str) == 4:
+                    end_year = int(end_year_str)
+            elif end_date.isdigit() and len(end_date) == 4:
+                end_year = int(end_date)
+
+    print(
+        f"⚙️ DEBUG kbcha_trim_selection - final start_year: {start_year}, end_year: {end_year}"
+    )
+
+    # Гарантируем, что start_year не больше текущего года
+    current_year = datetime.now().year
+    if start_year > current_year:
+        start_year = current_year - 5
+
+    # Если end_year < start_year (ошибочные данные), используем current_year
+    if end_year < start_year:
+        end_year = current_year
 
     # Сохраняем определенные годы для использования в дальнейшем
     user_search_data[user_id]["kbcha_generation_start_year"] = start_year
     user_search_data[user_id]["kbcha_generation_end_year"] = end_year
 
-    current_year = datetime.now().year
-
     # Формируем список годов для выбора
     markup = types.InlineKeyboardMarkup(row_width=3)
+
+    # Добавляем года от начала производства поколения до его конца или текущего года
     for year in range(start_year, min(end_year, current_year) + 1):
         markup.add(
             types.InlineKeyboardButton(
@@ -2341,6 +2379,10 @@ def handle_kcar_configuration_selection(call):
     config_code = parts[2]
     config_name = parts[3] if len(parts) > 3 else "Неизвестно"
 
+    print(f"✅ DEBUG kcar_config_selection - raw data:")
+    print(f"config_code: {config_code}")
+    print(f"config_name: {config_name}")
+
     # Сохраняем выбранную конфигурацию у пользователя для дальнейшего использования
     user_id = call.from_user.id
     if user_id not in user_search_data:
@@ -2354,44 +2396,78 @@ def handle_kcar_configuration_selection(call):
     model_name = user_search_data[user_id].get("kcar_model_name", "")
     gen_name = user_search_data[user_id].get("kcar_gen_name", "")
 
-    # Определяем начальный и конечный год для поколения
-    # Пытаемся извлечь эту информацию из названия поколения или иных источников
+    # Отладочная информация о названии поколения
+    print(f"⚙️ DEBUG kcar_config_selection - gen_name: '{gen_name}'")
+
+    # По умолчанию используем значения
     start_year = datetime.now().year - 5  # По умолчанию 5 лет назад
     end_year = datetime.now().year  # По умолчанию текущий год
 
     # Пытаемся извлечь годы производства из названия поколения
     if "(" in gen_name and ")" in gen_name:
         period_part = gen_name.split("(")[1].split(")")[0].strip()
-        if "—" in period_part or "-" in period_part:
-            parts = period_part.replace("—", "-").split("-")
-            if len(parts) == 2:
-                start_date = parts[0].strip()
-                end_date = parts[1].strip()
+        print(f"⚙️ DEBUG kcar_config_selection - period_part: '{period_part}'")
 
-                # Извлекаем год из начальной даты
-                if "." in start_date:
-                    start_year_str = start_date.split(".")[-1]
-                    if start_year_str.isdigit() and len(start_year_str) == 4:
-                        start_year = int(start_year_str)
-                elif start_date.isdigit() and len(start_date) == 4:
-                    start_year = int(start_date)
+        # Проверяем разные форматы разделителей
+        if "—" in period_part:
+            parts = period_part.split("—")
+        elif "-" in period_part:
+            parts = period_part.split("-")
+        else:
+            parts = []
 
-                # Извлекаем год из конечной даты
-                if "." in end_date:
-                    end_year_str = end_date.split(".")[-1]
-                    if end_year_str.isdigit() and len(end_year_str) == 4:
-                        end_year = int(end_year_str)
-                elif end_date.isdigit() and len(end_date) == 4:
-                    end_year = int(end_date)
+        print(f"⚙️ DEBUG kcar_config_selection - split parts: {parts}")
+
+        if len(parts) == 2:
+            start_date = parts[0].strip()
+            end_date = parts[1].strip()
+            print(
+                f"⚙️ DEBUG kcar_config_selection - start_date: '{start_date}', end_date: '{end_date}'"
+            )
+
+            # Извлекаем год из начальной даты
+            if "." in start_date:
+                start_year_str = start_date.split(".")[-1]
+                print(
+                    f"⚙️ DEBUG kcar_config_selection - parsed start_year_str: '{start_year_str}'"
+                )
+                if start_year_str.isdigit() and len(start_year_str) == 4:
+                    start_year = int(start_year_str)
+            elif start_date.isdigit() and len(start_date) == 4:
+                start_year = int(start_date)
+
+            # Извлекаем год из конечной даты
+            if "." in end_date:
+                end_year_str = end_date.split(".")[-1]
+                print(
+                    f"⚙️ DEBUG kcar_config_selection - parsed end_year_str: '{end_year_str}'"
+                )
+                if end_year_str.isdigit() and len(end_year_str) == 4:
+                    end_year = int(end_year_str)
+            elif end_date.isdigit() and len(end_date) == 4:
+                end_year = int(end_date)
+
+    print(
+        f"⚙️ DEBUG kcar_config_selection - final start_year: {start_year}, end_year: {end_year}"
+    )
+
+    # Гарантируем, что start_year не больше текущего года
+    current_year = datetime.now().year
+    if start_year > current_year:
+        start_year = current_year - 5
+
+    # Если end_year < start_year (ошибочные данные), используем current_year
+    if end_year < start_year:
+        end_year = current_year
 
     # Сохраняем определенные годы для использования в дальнейшем
     user_search_data[user_id]["kcar_generation_start_year"] = start_year
     user_search_data[user_id]["kcar_generation_end_year"] = end_year
 
-    current_year = datetime.now().year
-
     # Показываем выбор года от
     year_markup = types.InlineKeyboardMarkup(row_width=3)
+
+    # Добавляем года от начала производства поколения до его конца или текущего года
     for year in range(start_year, min(end_year, current_year) + 1):
         year_markup.add(
             types.InlineKeyboardButton(
@@ -2401,7 +2477,7 @@ def handle_kcar_configuration_selection(call):
 
     bot.send_message(
         call.message.chat.id,
-        f"Марка: {maker_name}\nМодель: {model_name}\nПоколение: {gen_name}\nКонфигурация: {config_name}\n\nВыберите начальный год выпуска:",
+        f"Марка: {maker_name}\nМодель: {model_name}\nПоколение: {gen_name}\nКонфигурация: {config_name}\n\nВыберите начальный год выпуска (поколение {start_year}-{end_year}):",
         reply_markup=year_markup,
     )
 
