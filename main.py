@@ -663,11 +663,13 @@ def handle_generation_selection(call):
 
     current_year = datetime.now().year
 
-    # Определяем начальный год - год начала поколения
-    start_year = int(start_raw[:4]) if len(start_raw) == 6 else current_year - 10
+    # Определяем начальный и конечный год
+    raw_start_year = int(start_raw[:4]) if len(start_raw) == 6 else current_year - 10
 
-    # Определяем конечный год - год окончания поколения или текущий год, если поколение еще выпускается
-    if end_raw and end_raw.isdigit() and len(end_raw) >= 4:
+    # Используем точный год начала поколения без смещения
+    start_year = raw_start_year
+
+    if end_raw and end_raw.isdigit():
         end_year = int(end_raw[:4])
     else:
         end_year = current_year
@@ -676,9 +678,10 @@ def handle_generation_selection(call):
     print(f"⚙️ DEBUG [handle_generation_selection] - Raw start_raw: '{start_raw}'")
     print(f"⚙️ DEBUG [handle_generation_selection] - Raw end_raw: '{end_raw}'")
     print(
-        f"⚙️ DEBUG [handle_generation_selection] - Start year of generation: {start_year}"
+        f"⚙️ DEBUG [handle_generation_selection] - Original API start_year: {raw_start_year}"
     )
-    print(f"⚙️ DEBUG [handle_generation_selection] - End year of generation: {end_year}")
+    print(f"⚙️ DEBUG [handle_generation_selection] - Used year_from: {start_year}")
+    print(f"⚙️ DEBUG [handle_generation_selection] - Calculated year_to: {end_year}")
     # --- END DEBUGGING ---
 
     # Получаем комплектации
@@ -763,7 +766,10 @@ def handle_trim_selection(call):
     print(json.dumps(user_search_data[user_id], indent=2, ensure_ascii=False))
 
     year_markup = types.InlineKeyboardMarkup(row_width=4)
-    for y in range(start_year, end_year + 1):
+    current_year = datetime.now().year
+
+    # Формируем диапазон лет от начала производства поколения до конца или текущего года
+    for y in range(start_year, min(end_year, current_year) + 1):
         year_markup.add(
             types.InlineKeyboardButton(str(y), callback_data=f"year_from_{y}")
         )
@@ -823,9 +829,13 @@ def handle_year_from_selection(call):
     print(f"✅ DEBUG user_search_data after year_from selection:")
     print(json.dumps(user_search_data[user_id], indent=2, ensure_ascii=False))
 
+    # Получаем конечный год периода выпуска поколения из сохраненных данных
+    end_year = user_search_data[user_id].get("year_to", datetime.now().year)
     current_year = datetime.now().year
+
+    # Формируем диапазон лет от выбранного года до конца производства поколения или текущего года
     year_markup = types.InlineKeyboardMarkup(row_width=4)
-    for y in range(year_from, current_year):  # +2 для учета будущего года
+    for y in range(year_from, min(end_year, current_year) + 1):
         year_markup.add(
             types.InlineKeyboardButton(str(y), callback_data=f"year_to_{year_from}_{y}")
         )
@@ -1700,12 +1710,46 @@ def handle_kbcha_trim_selection(call):
     translated_class_name = translations.get(class_name, class_name)
     translated_car_name = translate_phrase(car_name)
 
-    # Показываем выбор года от
-    current_year = datetime.now().year
-    start_year = current_year - 5
+    # Определяем начальный год для поколения
+    # Можно попытаться извлечь год из названия поколения или установить его на основе известных данных
+    # Например, для 4-го поколения Sorento (03.2020 — 07.2023) мы можем извлечь 2020 из "03.2020"
+    start_year = datetime.now().year - 5  # По умолчанию 5 лет назад
+    end_year = datetime.now().year  # По умолчанию текущий год
 
+    # Пытаемся найти информацию о периоде выпуска поколения в его названии
+    if "(" in car_name and ")" in car_name:
+        period_part = car_name.split("(")[1].split(")")[0].strip()
+        if "—" in period_part or "-" in period_part:
+            parts = period_part.replace("—", "-").split("-")
+            if len(parts) == 2:
+                start_date = parts[0].strip()
+                end_date = parts[1].strip()
+
+                # Извлекаем год из начальной даты (формат может быть "03.2020" или "2020")
+                if "." in start_date:
+                    start_year_str = start_date.split(".")[-1]
+                    if start_year_str.isdigit() and len(start_year_str) == 4:
+                        start_year = int(start_year_str)
+                elif start_date.isdigit() and len(start_date) == 4:
+                    start_year = int(start_date)
+
+                # Извлекаем год из конечной даты
+                if "." in end_date:
+                    end_year_str = end_date.split(".")[-1]
+                    if end_year_str.isdigit() and len(end_year_str) == 4:
+                        end_year = int(end_year_str)
+                elif end_date.isdigit() and len(end_date) == 4:
+                    end_year = int(end_date)
+
+    # Сохраняем определенные годы для использования в дальнейшем
+    user_search_data[user_id]["kbcha_generation_start_year"] = start_year
+    user_search_data[user_id]["kbcha_generation_end_year"] = end_year
+
+    current_year = datetime.now().year
+
+    # Формируем список годов для выбора
     markup = types.InlineKeyboardMarkup(row_width=3)
-    for year in range(start_year, current_year + 1):
+    for year in range(start_year, min(end_year, current_year) + 1):
         markup.add(
             types.InlineKeyboardButton(
                 f"{year}", callback_data=f"kbcha_year_from_{year}"
@@ -1753,12 +1797,16 @@ def handle_kbcha_year_from_selection(call):
 
     user_search_data[user_id]["kbcha_year_from"] = year_from
 
-    # Показываем выбор года до
+    # Получаем год окончания производства поколения
+    end_year = user_search_data[user_id].get(
+        "kbcha_generation_end_year", datetime.now().year
+    )
     current_year = datetime.now().year
     year_from_int = int(year_from)
 
+    # Формируем диапазон годов от выбранного года до конца производства поколения или текущего года
     markup = types.InlineKeyboardMarkup(row_width=3)
-    for year in range(year_from_int, current_year + 1):
+    for year in range(year_from_int, min(end_year, current_year) + 1):
         markup.add(
             types.InlineKeyboardButton(f"{year}", callback_data=f"kbcha_year_to_{year}")
         )
@@ -2306,12 +2354,45 @@ def handle_kcar_configuration_selection(call):
     model_name = user_search_data[user_id].get("kcar_model_name", "")
     gen_name = user_search_data[user_id].get("kcar_gen_name", "")
 
-    # Показываем выбор года от
-    current_year = datetime.now().year
-    start_year = current_year - 10  # Начинаем с 10 лет назад
+    # Определяем начальный и конечный год для поколения
+    # Пытаемся извлечь эту информацию из названия поколения или иных источников
+    start_year = datetime.now().year - 5  # По умолчанию 5 лет назад
+    end_year = datetime.now().year  # По умолчанию текущий год
 
+    # Пытаемся извлечь годы производства из названия поколения
+    if "(" in gen_name and ")" in gen_name:
+        period_part = gen_name.split("(")[1].split(")")[0].strip()
+        if "—" in period_part or "-" in period_part:
+            parts = period_part.replace("—", "-").split("-")
+            if len(parts) == 2:
+                start_date = parts[0].strip()
+                end_date = parts[1].strip()
+
+                # Извлекаем год из начальной даты
+                if "." in start_date:
+                    start_year_str = start_date.split(".")[-1]
+                    if start_year_str.isdigit() and len(start_year_str) == 4:
+                        start_year = int(start_year_str)
+                elif start_date.isdigit() and len(start_date) == 4:
+                    start_year = int(start_date)
+
+                # Извлекаем год из конечной даты
+                if "." in end_date:
+                    end_year_str = end_date.split(".")[-1]
+                    if end_year_str.isdigit() and len(end_year_str) == 4:
+                        end_year = int(end_year_str)
+                elif end_date.isdigit() and len(end_date) == 4:
+                    end_year = int(end_date)
+
+    # Сохраняем определенные годы для использования в дальнейшем
+    user_search_data[user_id]["kcar_generation_start_year"] = start_year
+    user_search_data[user_id]["kcar_generation_end_year"] = end_year
+
+    current_year = datetime.now().year
+
+    # Показываем выбор года от
     year_markup = types.InlineKeyboardMarkup(row_width=3)
-    for year in range(start_year, current_year + 1):
+    for year in range(start_year, min(end_year, current_year) + 1):
         year_markup.add(
             types.InlineKeyboardButton(
                 f"{year}", callback_data=f"kcar_year_from_{year}"
@@ -2338,12 +2419,16 @@ def handle_kcar_year_from_selection(call):
 
     user_search_data[user_id]["kcar_year_from"] = year_from
 
-    # Показываем выбор конечного года
+    # Получаем конечный год периода выпуска поколения из сохраненных данных
+    end_year = user_search_data[user_id].get(
+        "kcar_generation_end_year", datetime.now().year
+    )
     current_year = datetime.now().year
     year_from_int = int(year_from)
 
+    # Формируем диапазон лет от выбранного года до конца производства поколения или текущего года
     year_markup = types.InlineKeyboardMarkup(row_width=3)
-    for year in range(year_from_int, current_year + 1):
+    for year in range(year_from_int, min(end_year, current_year) + 1):
         year_markup.add(
             types.InlineKeyboardButton(f"{year}", callback_data=f"kcar_year_to_{year}")
         )
