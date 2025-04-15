@@ -663,13 +663,11 @@ def handle_generation_selection(call):
 
     current_year = datetime.now().year
 
-    # Определяем начальный и конечный год
-    raw_start_year = int(start_raw[:4]) if len(start_raw) == 6 else current_year - 10
+    # Определяем начальный год - год начала поколения
+    start_year = int(start_raw[:4]) if len(start_raw) == 6 else current_year - 10
 
-    # Используем точный год начала поколения без смещения
-    start_year = raw_start_year
-
-    if end_raw and end_raw.isdigit():
+    # Определяем конечный год - год окончания поколения или текущий год, если поколение еще выпускается
+    if end_raw and end_raw.isdigit() and len(end_raw) >= 4:
         end_year = int(end_raw[:4])
     else:
         end_year = current_year
@@ -678,10 +676,9 @@ def handle_generation_selection(call):
     print(f"⚙️ DEBUG [handle_generation_selection] - Raw start_raw: '{start_raw}'")
     print(f"⚙️ DEBUG [handle_generation_selection] - Raw end_raw: '{end_raw}'")
     print(
-        f"⚙️ DEBUG [handle_generation_selection] - Original API start_year: {raw_start_year}"
+        f"⚙️ DEBUG [handle_generation_selection] - Start year of generation: {start_year}"
     )
-    print(f"⚙️ DEBUG [handle_generation_selection] - Used year_from: {start_year}")
-    print(f"⚙️ DEBUG [handle_generation_selection] - Calculated year_to: {end_year}")
+    print(f"⚙️ DEBUG [handle_generation_selection] - End year of generation: {end_year}")
     # --- END DEBUGGING ---
 
     # Получаем комплектации
