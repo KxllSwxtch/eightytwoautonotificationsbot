@@ -825,7 +825,7 @@ def handle_year_from_selection(call):
 
     current_year = datetime.now().year
     year_markup = types.InlineKeyboardMarkup(row_width=4)
-    for y in range(year_from, current_year + 2):  # +2 для учета будущего года
+    for y in range(year_from, current_year):  # +2 для учета будущего года
         year_markup.add(
             types.InlineKeyboardButton(str(y), callback_data=f"year_to_{year_from}_{y}")
         )
