@@ -11,7 +11,6 @@ from dotenv import load_dotenv
 from datetime import datetime
 from translations import translations
 from bs4 import BeautifulSoup
-import logging
 
 # Путь до файла
 REQUESTS_FILE = "requests.json"
@@ -182,7 +181,7 @@ class CarForm(StatesGroup):
 
 
 def get_manufacturers():
-    url = "https://api.encar.com/search/car/list/general?count=true&q=(And.Hidden.N._.SellType.%EC%9D%BC%EB%B0%98._.CarType.A.)&inav=%7CMetadata%7CSort"
+    url = "https://encar-proxy.habsida.net/api/nav?count=true&q=(And.Hidden.N._.SellType.%EC%9D%BC%EB%B0%98._.CarType.A.)&inav=%7CMetadata%7CSort"
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
         response = requests.get(url, headers=headers)
@@ -203,7 +202,7 @@ def get_manufacturers():
 
 
 def get_models_by_brand(manufacturer):
-    url = f"https://api.encar.com/search/car/list/general?count=true&q=(And.Hidden.N._.SellType.%EC%9D%BC%EB%B0%98._.(C.CarType.A._.Manufacturer.{manufacturer}.))&inav=%7CMetadata%7CSort"
+    url = f"https://encar-proxy.habsida.net/api/nav?count=true&q=(And.Hidden.N._.SellType.%EC%9D%BC%EB%B0%98._.(C.CarType.A._.Manufacturer.{manufacturer}.))&inav=%7CMetadata%7CSort"
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
         response = requests.get(url, headers=headers)
@@ -232,7 +231,7 @@ def get_models_by_brand(manufacturer):
 
 
 def get_generations_by_model(manufacturer, model_group):
-    url = f"https://api.encar.com/search/car/list/general?count=true&q=(And.Hidden.N._.SellType.%EC%9D%BC%EB%B0%98._.(C.CarType.A._.(C.Manufacturer.{manufacturer}._.ModelGroup.{model_group}.)))&inav=%7CMetadata%7CSort"
+    url = f"https://encar-proxy.habsida.net/api/nav?count=true&q=(And.Hidden.N._.SellType.%EC%9D%BC%EB%B0%98._.(C.CarType.A._.(C.Manufacturer.{manufacturer}._.ModelGroup.{model_group}.)))&inav=%7CMetadata%7CSort"
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
         response = requests.get(url, headers=headers)
@@ -269,7 +268,7 @@ def get_generations_by_model(manufacturer, model_group):
 
 
 def get_trims_by_generation(manufacturer, model_group, model):
-    url = f"https://api.encar.com/search/car/list/general?count=true&q=(And.Hidden.N._.(C.CarType.A._.(C.Manufacturer.{manufacturer}._.(C.ModelGroup.{model_group}._.Model.{model}.))))&inav=%7CMetadata%7CSort"
+    url = f"https://encar-proxy.habsida.net/api/nav?count=true&q=(And.Hidden.N._.(C.CarType.A._.(C.Manufacturer.{manufacturer}._.(C.ModelGroup.{model_group}._.Model.{model}.))))&inav=%7CMetadata%7CSort"
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
         response = requests.get(url, headers=headers)
@@ -654,7 +653,7 @@ def handle_generation_selection(call):
         bot.answer_callback_query(call.id, "Не удалось определить поколение.")
         return
 
-    # Получаем даты начала и окончания поколения из API
+    # Получаем даты начала и окончания поколения
     start_raw = str(
         selected_generation.get("Metadata", {}).get("ModelStartDate", [""])[0]
     )
@@ -664,98 +663,26 @@ def handle_generation_selection(call):
 
     current_year = datetime.now().year
 
-    # Отладочная информация о поколении
-    print(
-        f"⚙️ DEBUG [handle_generation_selection] - Generation name: '{generation_eng}'"
-    )
+    # Определяем начальный и конечный год
+    raw_start_year = int(start_raw[:4]) if len(start_raw) == 6 else current_year - 10
+
+    # Используем точный год начала поколения без смещения
+    start_year = raw_start_year
+
+    if end_raw and end_raw.isdigit():
+        end_year = int(end_raw[:4])
+    else:
+        end_year = current_year
+
+    # --- DEBUGGING --- Выводим полученные даты и рассчитанные годы
     print(f"⚙️ DEBUG [handle_generation_selection] - Raw start_raw: '{start_raw}'")
     print(f"⚙️ DEBUG [handle_generation_selection] - Raw end_raw: '{end_raw}'")
-
-    # Инициализируем значения по умолчанию
-    start_year_from_api = None
-    end_year_from_api = None
-
-    # Анализируем start_raw, который может быть в формате YYYYmm
-    if start_raw and start_raw.isdigit():
-        if len(start_raw) == 6:  # Формат YYYYmm
-            start_year_from_api = int(start_raw[:4])
-        elif len(start_raw) == 4:  # Просто год
-            start_year_from_api = int(start_raw)
-
-    # Анализируем end_raw
-    if end_raw and end_raw.isdigit():
-        if len(end_raw) == 6:  # Формат YYYYmm
-            end_year_from_api = int(end_raw[:4])
-        elif len(end_raw) == 4:  # Просто год
-            end_year_from_api = int(end_raw)
-
-    # Также пытаемся извлечь годы из названия поколения
-    start_year_from_name = None
-    end_year_from_name = None
-
-    # Ищем период в названии поколения, например "Sorento Generation 4 (03.2020 — 07.2023)"
-    if "(" in generation_eng and ")" in generation_eng:
-        period_part = generation_eng.split("(")[1].split(")")[0].strip()
-        print(
-            f"⚙️ DEBUG [handle_generation_selection] - Period from name: '{period_part}'"
-        )
-
-        # Проверяем разные форматы разделителей
-        if "—" in period_part:
-            parts = period_part.split("—")
-        elif "-" in period_part:
-            parts = period_part.split("-")
-        else:
-            parts = []
-
-        if len(parts) == 2:
-            start_date = parts[0].strip()
-            end_date = parts[1].strip()
-            print(
-                f"⚙️ DEBUG [handle_generation_selection] - Parsed dates: start='{start_date}', end='{end_date}'"
-            )
-
-            # Извлекаем год из начальной даты
-            if "." in start_date:
-                start_year_str = start_date.split(".")[-1]
-                if start_year_str.isdigit() and len(start_year_str) == 4:
-                    start_year_from_name = int(start_year_str)
-            elif start_date.isdigit() and len(start_date) == 4:
-                start_year_from_name = int(start_date)
-
-            # Извлекаем год из конечной даты
-            if "." in end_date:
-                end_year_str = end_date.split(".")[-1]
-                if end_year_str.isdigit() and len(end_year_str) == 4:
-                    end_year_from_name = int(end_year_str)
-            elif end_date.isdigit() and len(end_date) == 4:
-                end_year_from_name = int(end_date)
-
-    # Выбираем наиболее корректный год начала (предпочитаем год из названия)
-    if start_year_from_name:
-        start_year = start_year_from_name
-    elif start_year_from_api:
-        start_year = start_year_from_api
-    else:
-        start_year = current_year - 5  # По умолчанию 5 лет назад
-
-    # Выбираем конечный год (предпочитаем год из названия)
-    if end_year_from_name:
-        end_year = end_year_from_name
-    elif end_year_from_api:
-        end_year = end_year_from_api
-    else:
-        end_year = current_year  # По умолчанию текущий год
-
     print(
-        f"⚙️ DEBUG [handle_generation_selection] - Years from API: start={start_year_from_api}, end={end_year_from_api}"
+        f"⚙️ DEBUG [handle_generation_selection] - Original API start_year: {raw_start_year}"
     )
-    print(
-        f"⚙️ DEBUG [handle_generation_selection] - Years from name: start={start_year_from_name}, end={end_year_from_name}"
-    )
-    print(
-        f"⚙️ DEBUG [handle_generation_selection] - Final years: start={start_year}, end={end_year}"
-    )
+    print(f"⚙️ DEBUG [handle_generation_selection] - Used year_from: {start_year}")
+    print(f"⚙️ DEBUG [handle_generation_selection] - Calculated year_to: {end_year}")
+    # --- END DEBUGGING ---
 
     # Получаем комплектации
     trims = get_trims_by_generation(brand_kr, model_kr, generation_kr)
@@ -2393,142 +2320,70 @@ def handle_kcar_model_selection(call):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("kcar_gen_"))
 def handle_kcar_generation_selection(call):
+    """Обработчик выбора поколения автомобиля на KCar"""
     # Парсим данные из callback_data
     parts = call.data.split("_", 3)
-    model_code = parts[2]
-    model_name = parts[3] if len(parts) > 3 else "Неизвестно"
+    gen_code = parts[2]
+    gen_name = parts[3] if len(parts) > 3 else "Неизвестно"
 
     # Сохраняем выбранное поколение у пользователя для дальнейшего использования
     user_id = call.from_user.id
     if user_id not in user_search_data:
         user_search_data[user_id] = {}
 
-    user_search_data[user_id]["kcar_model_code"] = model_code
-    user_search_data[user_id]["kcar_model_name"] = model_name
+    user_search_data[user_id]["kcar_gen_code"] = gen_code
+    user_search_data[user_id]["kcar_gen_name"] = gen_name
 
-    # Получаем доп. информацию
-    maker_code = user_search_data[user_id].get("kcar_maker_code", "")
+    # Получаем информацию о предыдущих выборах
     maker_name = user_search_data[user_id].get("kcar_maker_name", "")
-    model_group_code = user_search_data[user_id].get("kcar_model_group_code", "")
-    model_group_name = user_search_data[user_id].get("kcar_model_group_name", "")
+    maker_code = user_search_data[user_id].get("kcar_maker_code", "")
+    model_name = user_search_data[user_id].get("kcar_model_name", "")
+    model_code = user_search_data[user_id].get("kcar_model_code", "")
 
-    # Получаем комплектации
-    try:
-        configurations = get_kcar_configurations(
-            maker_code, model_group_code, model_code
+    # Получаем список конфигураций для выбранного поколения
+    configurations = get_kcar_configurations(maker_code, model_code, gen_code)
+    if not configurations:
+        bot.send_message(
+            call.message.chat.id,
+            f"Не удалось загрузить конфигурации для {gen_name} или для этого поколения нет доступных конфигураций.",
         )
-        if not configurations:
-            bot.answer_callback_query(
-                call.id, "Не удалось загрузить комплектации для выбранного поколения."
-            )
-            return
+        return
 
-        # Отладочная информация о поколении
-        print(
-            f"⚙️ DEBUG [handle_kcar_generation_selection] - Generation name: '{model_name}'"
-        )
+    # Создаем клавиатуру с конфигурациями
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    for item in configurations:
+        config_name = item.get("grdNm", "Без названия")
+        config_code = item.get("grdCd", "")
+        count = item.get("count", 0)
 
-        # Пытаемся извлечь годы из названия поколения
-        start_year_from_name = None
-        end_year_from_name = None
+        # Формируем текст кнопки с названием и количеством автомобилей
+        display_text = f"{config_name} ({count} шт.)"
+        callback_data = f"kcar_config_{config_code}_{config_name}"
 
-        # Ищем период в названии поколения, например "Model Name (03.2020 — 07.2023)"
-        if "(" in model_name and ")" in model_name:
-            period_part = model_name.split("(")[1].split(")")[0].strip()
-            print(
-                f"⚙️ DEBUG [handle_kcar_generation_selection] - Period from name: '{period_part}'"
-            )
-
-            # Проверяем разные форматы разделителей
-            if "—" in period_part:
-                parts = period_part.split("—")
-            elif "-" in period_part:
-                parts = period_part.split("-")
-            else:
-                parts = []
-
-            if len(parts) == 2:
-                start_date = parts[0].strip()
-                end_date = parts[1].strip()
-                print(
-                    f"⚙️ DEBUG [handle_kcar_generation_selection] - Parsed dates: start='{start_date}', end='{end_date}'"
-                )
-
-                # Извлекаем год из начальной даты
-                if "." in start_date:
-                    start_year_str = start_date.split(".")[-1]
-                    if start_year_str.isdigit() and len(start_year_str) == 4:
-                        start_year_from_name = int(start_year_str)
-                elif start_date.isdigit() and len(start_date) == 4:
-                    start_year_from_name = int(start_date)
-
-                # Извлекаем год из конечной даты
-                if "." in end_date:
-                    end_year_str = end_date.split(".")[-1]
-                    if end_year_str.isdigit() and len(end_year_str) == 4:
-                        end_year_from_name = int(end_year_str)
-                elif end_date.isdigit() and len(end_date) == 4:
-                    end_year_from_name = int(end_date)
-
-        current_year = datetime.now().year
-
-        # Определяем годы производства
-        if start_year_from_name:
-            start_year = start_year_from_name
-        else:
-            start_year = current_year - 5  # По умолчанию 5 лет назад
-
-        if end_year_from_name:
-            end_year = end_year_from_name
-        else:
-            end_year = current_year  # По умолчанию текущий год
-
-        print(
-            f"⚙️ DEBUG [handle_kcar_generation_selection] - Years from name: start={start_year_from_name}, end={end_year_from_name}"
-        )
-        print(
-            f"⚙️ DEBUG [handle_kcar_generation_selection] - Final years: start={start_year}, end={end_year}"
+        markup.add(
+            types.InlineKeyboardButton(display_text, callback_data=callback_data)
         )
 
-        # Сохраняем данные о годах
-        user_search_data[user_id]["kcar_year_from"] = start_year
-        user_search_data[user_id]["kcar_year_to"] = end_year
-
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        for config in configurations:
-            config_name = config.get("configNm", "")
-            config_code = config.get("configCd", "")
-            callback_data = f"kcar_config_{config_code}_{config_name}"
-
-            markup.add(
-                types.InlineKeyboardButton(config_name, callback_data=callback_data)
-            )
-
-        bot.edit_message_text(
-            f"Платформа: KCar\n"
-            f"Марка: {maker_name}\n"
-            f"Модель: {model_group_name}\n"
-            f"Поколение: {model_name}\n"
-            f"Выберите комплектацию:",
-            chat_id=call.message.chat.id,
-            message_id=call.message.message_id,
-            reply_markup=markup,
-        )
-    except Exception as e:
-        print(f"Ошибка при получении комплектаций KCar: {e}")
-        bot.answer_callback_query(
-            call.id, "Произошла ошибка при загрузке комплектаций."
-        )
+    bot.send_message(
+        call.message.chat.id,
+        f"Марка: {maker_name}\nМодель: {model_name}\nПоколение: {gen_name}\nВыберите конфигурацию:",
+        reply_markup=markup,
+    )
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("kcar_config_"))
-def handle_kcar_config_selection(call):
+def handle_kcar_configuration_selection(call):
+    """Обработчик выбора конфигурации автомобиля на KCar"""
     # Парсим данные из callback_data
     parts = call.data.split("_", 3)
     config_code = parts[2]
     config_name = parts[3] if len(parts) > 3 else "Неизвестно"
 
-    # Сохраняем выбранную комплектацию у пользователя для дальнейшего использования
+    print(f"✅ DEBUG kcar_config_selection - raw data:")
+    print(f"config_code: {config_code}")
+    print(f"config_name: {config_name}")
+
+    # Сохраняем выбранную конфигурацию у пользователя для дальнейшего использования
     user_id = call.from_user.id
     if user_id not in user_search_data:
         user_search_data[user_id] = {}
@@ -2538,100 +2393,97 @@ def handle_kcar_config_selection(call):
 
     # Получаем информацию о предыдущих выборах
     maker_name = user_search_data[user_id].get("kcar_maker_name", "")
-    model_group_name = user_search_data[user_id].get("kcar_model_group_name", "")
     model_name = user_search_data[user_id].get("kcar_model_name", "")
+    gen_name = user_search_data[user_id].get("kcar_gen_name", "")
 
-    # Получаем диапазон годов
-    year_from = user_search_data[user_id].get("kcar_year_from", datetime.now().year - 5)
-    year_to = user_search_data[user_id].get("kcar_year_to", datetime.now().year)
+    # Отладочная информация о названии поколения
+    print(f"⚙️ DEBUG kcar_config_selection - gen_name: '{gen_name}'")
 
-    # Создаем клавиатуру с годами выпуска
-    markup = types.InlineKeyboardMarkup(row_width=3)
-    year_buttons = []
+    # По умолчанию используем значения
+    start_year = datetime.now().year - 5  # По умолчанию 5 лет назад
+    end_year = datetime.now().year  # По умолчанию текущий год
 
-    for year in range(year_from, year_to + 1):
-        callback_data = f"kcar_year_{year}"
-        year_buttons.append(
-            types.InlineKeyboardButton(str(year), callback_data=callback_data)
+    # Пытаемся извлечь годы производства из названия поколения
+    if "(" in gen_name and ")" in gen_name:
+        period_part = gen_name.split("(")[1].split(")")[0].strip()
+        print(f"⚙️ DEBUG kcar_config_selection - period_part: '{period_part}'")
+
+        # Проверяем разные форматы разделителей
+        if "—" in period_part:
+            parts = period_part.split("—")
+        elif "-" in period_part:
+            parts = period_part.split("-")
+        else:
+            parts = []
+
+        print(f"⚙️ DEBUG kcar_config_selection - split parts: {parts}")
+
+        if len(parts) == 2:
+            start_date = parts[0].strip()
+            end_date = parts[1].strip()
+            print(
+                f"⚙️ DEBUG kcar_config_selection - start_date: '{start_date}', end_date: '{end_date}'"
+            )
+
+            # Извлекаем год из начальной даты
+            if "." in start_date:
+                start_year_str = start_date.split(".")[-1]
+                print(
+                    f"⚙️ DEBUG kcar_config_selection - parsed start_year_str: '{start_year_str}'"
+                )
+                if start_year_str.isdigit() and len(start_year_str) == 4:
+                    start_year = int(start_year_str)
+            elif start_date.isdigit() and len(start_date) == 4:
+                start_year = int(start_date)
+
+            # Извлекаем год из конечной даты
+            if "." in end_date:
+                end_year_str = end_date.split(".")[-1]
+                print(
+                    f"⚙️ DEBUG kcar_config_selection - parsed end_year_str: '{end_year_str}'"
+                )
+                if end_year_str.isdigit() and len(end_year_str) == 4:
+                    end_year = int(end_year_str)
+            elif end_date.isdigit() and len(end_date) == 4:
+                end_year = int(end_date)
+
+    print(
+        f"⚙️ DEBUG kcar_config_selection - final start_year: {start_year}, end_year: {end_year}"
+    )
+
+    # Гарантируем, что start_year не больше текущего года
+    current_year = datetime.now().year
+    if start_year > current_year:
+        start_year = current_year - 5
+
+    # Если end_year < start_year (ошибочные данные), используем current_year
+    if end_year < start_year:
+        end_year = current_year
+
+    # Сохраняем определенные годы для использования в дальнейшем
+    user_search_data[user_id]["kcar_generation_start_year"] = start_year
+    user_search_data[user_id]["kcar_generation_end_year"] = end_year
+
+    # Показываем выбор года от
+    year_markup = types.InlineKeyboardMarkup(row_width=3)
+
+    # Добавляем года от начала производства поколения до его конца или текущего года
+    for year in range(start_year, min(end_year, current_year) + 1):
+        year_markup.add(
+            types.InlineKeyboardButton(
+                f"{year}", callback_data=f"kcar_year_from_{year}"
+            )
         )
 
-    # Добавляем кнопки по 3 в ряд
-    for i in range(0, len(year_buttons), 3):
-        row = year_buttons[i : i + 3]
-        markup.row(*row)
-
-    # Добавляем кнопку "Любой год"
-    markup.add(types.InlineKeyboardButton("Любой год", callback_data="kcar_year_any"))
-
-    bot.edit_message_text(
-        f"Платформа: KCar\n"
-        f"Марка: {maker_name}\n"
-        f"Модель: {model_group_name}\n"
-        f"Поколение: {model_name}\n"
-        f"Комплектация: {config_name}\n"
-        f"Выберите год выпуска:",
-        chat_id=call.message.chat.id,
-        message_id=call.message.message_id,
-        reply_markup=markup,
+    bot.send_message(
+        call.message.chat.id,
+        f"Марка: {maker_name}\nМодель: {model_name}\nПоколение: {gen_name}\nКонфигурация: {config_name}\n\nВыберите начальный год выпуска (поколение {start_year}-{end_year}):",
+        reply_markup=year_markup,
     )
 
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("kcar_year_"))
-def handle_kcar_year_selection(call):
-    # Парсим данные из callback_data
-    parts = call.data.split("_")
-    selected_year = parts[2]
-
-    # Сохраняем выбранный год у пользователя для дальнейшего использования
-    user_id = call.from_user.id
-    if user_id not in user_search_data:
-        user_search_data[user_id] = {}
-
-    if selected_year == "any":
-        user_search_data[user_id]["kcar_selected_year"] = None
-        year_display = "Любой"
-    else:
-        user_search_data[user_id]["kcar_selected_year"] = int(selected_year)
-        year_display = selected_year
-
-    # Получаем информацию о предыдущих выборах
-    maker_name = user_search_data[user_id].get("kcar_maker_name", "")
-    model_group_name = user_search_data[user_id].get("kcar_model_group_name", "")
-    model_name = user_search_data[user_id].get("kcar_model_name", "")
-    config_name = user_search_data[user_id].get("kcar_config_name", "")
-
-    # Создаем клавиатуру для выбора пробега "от"
-    markup = types.InlineKeyboardMarkup(row_width=2)
-
-    mileage_options = [
-        ("Любой", "any"),
-        ("До 10,000 км", "10000"),
-        ("До 30,000 км", "30000"),
-        ("До 50,000 км", "50000"),
-        ("До 100,000 км", "100000"),
-        ("До 150,000 км", "150000"),
-    ]
-
-    for label, value in mileage_options:
-        callback_data = f"kcar_mileage_{value}"
-        markup.add(types.InlineKeyboardButton(label, callback_data=callback_data))
-
-    bot.edit_message_text(
-        f"Платформа: KCar\n"
-        f"Марка: {maker_name}\n"
-        f"Модель: {model_group_name}\n"
-        f"Поколение: {model_name}\n"
-        f"Комплектация: {config_name}\n"
-        f"Год: {year_display}\n"
-        f"Выберите максимальный пробег:",
-        chat_id=call.message.chat.id,
-        message_id=call.message.message_id,
-        reply_markup=markup,
-    )
-
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("kcar_year_"))
-def handle_kcar_year_selection(call):
+@bot.callback_query_handler(func=lambda call: call.data.startswith("kcar_year_from_"))
+def handle_kcar_year_from_selection(call):
     """Обработчик выбора начального года для KCar"""
     # Парсим выбранный год
     year_from = call.data.split("_")[3]
@@ -3070,296 +2922,6 @@ def search_kcar_cars_by_html(
         return results
     except Exception as e:
         print(f"Ошибка при поиске автомобилей на KCar через HTML: {e}")
-        return []
-
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("kcar_mileage_"))
-def handle_kcar_mileage_selection(call):
-    # Парсим данные из callback_data
-    parts = call.data.split("_")
-    mileage_value = parts[2]
-
-    # Сохраняем выбранный пробег у пользователя для дальнейшего использования
-    user_id = call.from_user.id
-    if user_id not in user_search_data:
-        user_search_data[user_id] = {}
-
-    if mileage_value == "any":
-        user_search_data[user_id]["kcar_mileage"] = None
-        mileage_display = "Любой"
-    else:
-        user_search_data[user_id]["kcar_mileage"] = int(mileage_value)
-        mileage_display = f"До {int(mileage_value):,} км".replace(",", " ")
-
-    # Получаем информацию о предыдущих выборах
-    maker_name = user_search_data[user_id].get("kcar_maker_name", "")
-    model_group_name = user_search_data[user_id].get("kcar_model_group_name", "")
-    model_name = user_search_data[user_id].get("kcar_model_name", "")
-    config_name = user_search_data[user_id].get("kcar_config_name", "")
-    year_display = user_search_data[user_id].get("kcar_selected_year", "Любой")
-    if year_display is None:
-        year_display = "Любой"
-
-    # Создаем клавиатуру для выбора цвета
-    markup = types.InlineKeyboardMarkup(row_width=3)
-
-    # Получаем список цветов для KCar
-    colors = [
-        ("Любой", "any"),
-        ("Белый", "W"),
-        ("Черный", "B"),
-        ("Серебристый", "S"),
-        ("Серый", "G"),
-        ("Красный", "R"),
-        ("Синий", "L"),
-        ("Зеленый", "N"),
-        ("Бежевый", "E"),
-        ("Коричневый", "D"),
-        ("Золотистый", "O"),
-        ("Желтый", "Y"),
-        ("Оранжевый", "A"),
-        ("Фиолетовый", "P"),
-    ]
-
-    # Добавляем кнопки с цветами
-    color_buttons = []
-    for color_name, color_code in colors:
-        callback_data = f"kcar_color_{color_code}"
-        color_buttons.append(
-            types.InlineKeyboardButton(color_name, callback_data=callback_data)
-        )
-
-    # Добавляем кнопки по 3 в ряд
-    for i in range(0, len(color_buttons), 3):
-        row = color_buttons[i : i + 3]
-        markup.row(*row)
-
-    bot.edit_message_text(
-        f"Платформа: KCar\n"
-        f"Марка: {maker_name}\n"
-        f"Модель: {model_group_name}\n"
-        f"Поколение: {model_name}\n"
-        f"Комплектация: {config_name}\n"
-        f"Год: {year_display}\n"
-        f"Пробег: {mileage_display}\n"
-        f"Выберите цвет:",
-        chat_id=call.message.chat.id,
-        message_id=call.message.message_id,
-        reply_markup=markup,
-    )
-
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("kcar_color_"))
-def handle_kcar_color_selection(call):
-    # Парсим данные из callback_data
-    parts = call.data.split("_")
-    color_code = parts[2]
-
-    # Сохраняем выбранный цвет у пользователя для дальнейшего использования
-    user_id = call.from_user.id
-    if user_id not in user_search_data:
-        user_search_data[user_id] = {}
-
-    if color_code == "any":
-        user_search_data[user_id]["kcar_color"] = None
-        color_display = "Любой"
-    else:
-        user_search_data[user_id]["kcar_color"] = color_code
-        # Определяем название цвета по коду
-        colors_dict = {
-            "W": "Белый",
-            "B": "Черный",
-            "S": "Серебристый",
-            "G": "Серый",
-            "R": "Красный",
-            "L": "Синий",
-            "N": "Зеленый",
-            "E": "Бежевый",
-            "D": "Коричневый",
-            "O": "Золотистый",
-            "Y": "Желтый",
-            "A": "Оранжевый",
-            "P": "Фиолетовый",
-        }
-        color_display = colors_dict.get(color_code, "Неизвестно")
-
-    # Получаем информацию о предыдущих выборах
-    maker_name = user_search_data[user_id].get("kcar_maker_name", "")
-    model_group_name = user_search_data[user_id].get("kcar_model_group_name", "")
-    model_name = user_search_data[user_id].get("kcar_model_name", "")
-    config_name = user_search_data[user_id].get("kcar_config_name", "")
-    year_display = user_search_data[user_id].get("kcar_selected_year", "Любой")
-    if year_display is None:
-        year_display = "Любой"
-
-    mileage = user_search_data[user_id].get("kcar_mileage")
-    if mileage is None:
-        mileage_display = "Любой"
-    else:
-        mileage_display = f"До {mileage:,} км".replace(",", " ")
-
-    # Выполняем поиск автомобилей с выбранными параметрами
-    try:
-        car_list = search_kcar_cars(
-            user_id=user_id,
-            maker_code=user_search_data[user_id].get("kcar_maker_code"),
-            model_group_code=user_search_data[user_id].get("kcar_model_group_code"),
-            model_code=user_search_data[user_id].get("kcar_model_code"),
-            config_code=user_search_data[user_id].get("kcar_config_code"),
-            year=user_search_data[user_id].get("kcar_selected_year"),
-            mileage=user_search_data[user_id].get("kcar_mileage"),
-            color=user_search_data[user_id].get("kcar_color"),
-        )
-
-        # Формируем сообщение с результатами поиска
-        if car_list and len(car_list) > 0:
-            result_message = (
-                f"🚗 <b>Результаты поиска на KCar:</b>\n"
-                f"Марка: {maker_name}\n"
-                f"Модель: {model_group_name}\n"
-                f"Поколение: {model_name}\n"
-                f"Комплектация: {config_name}\n"
-                f"Год: {year_display}\n"
-                f"Пробег: {mileage_display}\n"
-                f"Цвет: {color_display}\n\n"
-                f"Найдено автомобилей: {len(car_list)}\n\n"
-            )
-
-            # Добавляем информацию о найденных автомобилях
-            for i, car in enumerate(
-                car_list[:10], 1
-            ):  # Ограничиваем вывод первыми 10 автомобилями
-                car_url = f"https://www.kcar.com/bc/detail/carInfoDetail?i_sCarCd={car.get('carCd', '')}"
-
-                # Получаем данные об автомобиле
-                price = int(car.get("slPrc", 0))
-                formatted_price = f"{price:,}".replace(",", " ")
-
-                year = car.get("frstRegDt", "")[:4] if car.get("frstRegDt") else "N/A"
-                mileage = int(car.get("mileage", 0))
-                formatted_mileage = f"{mileage:,}".replace(",", " ")
-
-                car_name = car.get("crNm", "Неизвестно")
-
-                result_message += (
-                    f"{i}. <a href='{car_url}'>{car_name} ({year})</a>\n"
-                    f"   💰 {formatted_price} вон\n"
-                    f"   🚗 {formatted_mileage} км\n\n"
-                )
-
-            # Если найдено больше 10 автомобилей, добавляем примечание
-            if len(car_list) > 10:
-                result_message += f"И еще {len(car_list) - 10} автомобилей. Уточните параметры поиска для более точных результатов."
-
-            # Добавляем клавиатуру с кнопкой назад
-            markup = types.InlineKeyboardMarkup()
-            markup.add(
-                types.InlineKeyboardButton(
-                    "◀️ Назад к платформам", callback_data="select_platform"
-                )
-            )
-
-            bot.send_message(
-                call.message.chat.id,
-                result_message,
-                parse_mode="HTML",
-                disable_web_page_preview=False,
-                reply_markup=markup,
-            )
-        else:
-            # Если автомобили не найдены
-            bot.send_message(
-                call.message.chat.id,
-                f"🔍 По вашему запросу не найдено автомобилей на KCar.\n\n"
-                f"Попробуйте изменить параметры поиска.",
-                reply_markup=types.InlineKeyboardMarkup().add(
-                    types.InlineKeyboardButton(
-                        "◀️ Назад к платформам", callback_data="select_platform"
-                    )
-                ),
-            )
-    except Exception as e:
-        # В случае ошибки
-        logging.error(f"Error searching KCar cars: {e}")
-        bot.send_message(
-            call.message.chat.id,
-            f"⚠️ Произошла ошибка при поиске автомобилей на KCar.\n\n"
-            f"Детали ошибки: {str(e)}",
-            reply_markup=types.InlineKeyboardMarkup().add(
-                types.InlineKeyboardButton(
-                    "◀️ Назад к платформам", callback_data="select_platform"
-                )
-            ),
-        )
-
-
-def search_kcar_cars(
-    user_id,
-    maker_code,
-    model_group_code,
-    model_code,
-    config_code,
-    year=None,
-    mileage=None,
-    color=None,
-):
-    """
-    Функция для поиска автомобилей на KCar по заданным параметрам
-    """
-    url = "https://api.kcar.com/bc/search/v2"
-
-    # Базовые параметры запроса
-    payload = {
-        "pageNum": 1,
-        "pageSize": 24,
-        "sortType": 0,  # По умолчанию
-        "sortKey": "ModifiedDate",  # По умолчанию - сортировка по дате
-        "isSell": True,
-    }
-
-    # Добавляем параметры поиска, если они указаны
-    if maker_code:
-        payload["mnuftrCd"] = maker_code
-
-    if model_group_code:
-        payload["modelGrpCd"] = model_group_code
-
-    if model_code:
-        payload["modelCd"] = model_code
-
-    if config_code:
-        payload["grdCd"] = config_code
-
-    # Добавляем год, если он указан
-    if year:
-        payload["yrMin"] = year
-        payload["yrMax"] = year
-
-    # Добавляем максимальный пробег, если он указан
-    if mileage:
-        payload["mlgMax"] = mileage
-
-    # Добавляем цвет, если он указан
-    if color:
-        payload["extColorCd"] = color
-
-    try:
-        response = requests.post(url, json=payload)
-        if response.status_code == 200:
-            data = response.json()
-
-            # Проверяем успешность запроса и наличие данных
-            if data.get("result", {}).get("code") == "Success":
-                car_list = data.get("dataList", [])
-                return car_list
-            else:
-                logging.error(f"Error in KCar API response: {data}")
-                return []
-        else:
-            logging.error(f"Error fetching KCar cars: {response.status_code}")
-            return []
-    except Exception as e:
-        logging.error(f"Exception in search_kcar_cars: {e}")
         return []
 
 
