@@ -181,7 +181,7 @@ class CarForm(StatesGroup):
 
 
 def get_manufacturers():
-    url = "https://encar-proxy.habsida.net/api/nav?count=true&q=(And.Hidden.N._.SellType.%EC%9D%BC%EB%B0%98._.CarType.A.)&inav=%7CMetadata%7CSort"
+    url = "https://encar-proxy-main.onrender.com/api/nav?count=true&q=(And.Hidden.N._.SellType.%EC%9D%BC%EB%B0%98._.CarType.A.)&inav=%7CMetadata%7CSort"
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
         response = requests.get(url, headers=headers)
@@ -202,7 +202,7 @@ def get_manufacturers():
 
 
 def get_models_by_brand(manufacturer):
-    url = f"https://encar-proxy.habsida.net/api/nav?count=true&q=(And.Hidden.N._.SellType.%EC%9D%BC%EB%B0%98._.(C.CarType.A._.Manufacturer.{manufacturer}.))&inav=%7CMetadata%7CSort"
+    url = f"https://encar-proxy-main.onrender.com/api/nav?count=true&q=(And.Hidden.N._.SellType.%EC%9D%BC%EB%B0%98._.(C.CarType.A._.Manufacturer.{manufacturer}.))&inav=%7CMetadata%7CSort"
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
         response = requests.get(url, headers=headers)
@@ -231,7 +231,7 @@ def get_models_by_brand(manufacturer):
 
 
 def get_generations_by_model(manufacturer, model_group):
-    url = f"https://encar-proxy.habsida.net/api/nav?count=true&q=(And.Hidden.N._.SellType.%EC%9D%BC%EB%B0%98._.(C.CarType.A._.(C.Manufacturer.{manufacturer}._.ModelGroup.{model_group}.)))&inav=%7CMetadata%7CSort"
+    url = f"https://encar-proxy-main.onrender.com/api/nav?count=true&q=(And.Hidden.N._.SellType.%EC%9D%BC%EB%B0%98._.(C.CarType.A._.(C.Manufacturer.{manufacturer}._.ModelGroup.{model_group}.)))&inav=%7CMetadata%7CSort"
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
         response = requests.get(url, headers=headers)
@@ -268,7 +268,7 @@ def get_generations_by_model(manufacturer, model_group):
 
 
 def get_trims_by_generation(manufacturer, model_group, model):
-    url = f"https://encar-proxy.habsida.net/api/nav?count=true&q=(And.Hidden.N._.(C.CarType.A._.(C.Manufacturer.{manufacturer}._.(C.ModelGroup.{model_group}._.Model.{model}.))))&inav=%7CMetadata%7CSort"
+    url = f"https://encar-proxy-main.onrender.com/api/nav?count=true&q=(And.Hidden.N._.(C.CarType.A._.(C.Manufacturer.{manufacturer}._.(C.ModelGroup.{model_group}._.Model.{model}.))))&inav=%7CMetadata%7CSort"
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
         response = requests.get(url, headers=headers)
@@ -1101,7 +1101,7 @@ def build_encar_url(
 
     # Формируем URL точно как в рабочем примере
     url = (
-        f"https://encar-proxy.habsida.net/api/catalog?count=true&q="
+        f"https://encar-proxy-main.onrender.com/api/catalog?count=true&q="
         f"(And.Hidden.N._.SellType.{sell_type_encoded}._.Color.{color_encoded}._."
         f"(C.CarType.A._."
         f"(C.Manufacturer.{manufacturer_encoded}._."
@@ -1214,7 +1214,7 @@ def check_for_new_cars(
 # Добавленный код для команд userlist и remove_user
 @bot.message_handler(commands=["userlist"])
 def handle_userlist_command(message):
-    if message.from_user.id not in [604303416, 728438182]:
+    if message.from_user.id not in [MANAGER, 604303416, 728438182]:
         bot.reply_to(message, "❌ У вас нет доступа к этой команде.")
         return
 
@@ -1234,7 +1234,7 @@ def handle_userlist_command(message):
 
 @bot.message_handler(commands=["remove_user"])
 def handle_remove_user(message):
-    if message.from_user.id not in [604303416, 728438182]:
+    if message.from_user.id not in [MANAGER, 604303416, 728438182]:
         bot.reply_to(message, "❌ У вас нет доступа к этой команде.")
         return
 
