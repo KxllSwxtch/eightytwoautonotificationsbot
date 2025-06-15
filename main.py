@@ -372,7 +372,7 @@ def start_handler(message):
 
 @bot.message_handler(commands=["add-user"])
 def handle_add_user(message):
-    if message.from_user.id != MANAGER:
+    if message.from_user.id not in [MANAGER, 604303416, 728438182]:
         bot.reply_to(message, "❌ У вас нет прав для добавления пользователей.")
         return
 
